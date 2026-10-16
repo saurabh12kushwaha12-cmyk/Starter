@@ -364,14 +364,27 @@ def _billing(account_id: str, session: dict[str, Any], trace_id: str) -> dict[st
     return data
 
 
-def _network(postal_code: str, session: dict[str, Any], trace_id: str) -> dict[str, Any]:
-    emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"], component="network-diagnostics")
-    query = urllib.parse.urlencode({"postalCode": postal_code})
+def _network(postal_code: str, session: dict[str, Any], trace_id: str,
+             service_type: str | None = None) -> dict[str, Any]:
+    emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"],
+         component="network-diagnostics", metadata={"serviceType": service_type} if service_type else None)
+    params = {"postalCode": postal_code}
+    if service_type:
+        params["serviceType"] = service_type
+    query = urllib.parse.urlencode(params)
     data = call_json("GET", "/api/network/outages?" + query,
-                     headers=_session_headers(session), trace_id=trace_id, session_id=session["sessionId"], component="network-diagnostics")
-    if data.get("postalCode") != postal_code or "status" not in data:
+                     headers=_session_headers(session), trace_id=trace_id,
+                     session_id=session["sessionId"], component="network-diagnostics")
+    valid_statuses = {"unknown", "normal", "degraded", "outage", "down"}
+    if (data.get("postalCode") != postal_code
+            or data.get("status") not in valid_statuses
+            or (service_type and data.get("serviceType") != service_type)):
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component="network-diagnostics", metadata={"reason": "malformed_response"})
         raise ServiceError("network-diagnostics", "malformed_response")
-    emit("tool.completed", trace_id, session_id=session["sessionId"], component="network-diagnostics", metadata={"status": data.get("status")})
+    emit("tool.completed", trace_id, session_id=session["sessionId"],
+         component="network-diagnostics",
+         metadata={"status": data.get("status"), "serviceType": data.get("serviceType")})
     return data
 
 
@@ -715,7 +728,7 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                     if not isinstance(postal, str) or not re.fullmatch(r"\d{5}", postal):
                         raise ServiceError("customer-profile", "postal_code_unavailable")
                     account = _account(session, account_id, trace_id)
-                    network = _network(postal, session, trace_id)
+                    network = _network(postal, session, trace_id, intent.get("serviceType"))
                     services = account.get("services") or []
                     service_id = next((s.get("serviceId") for s in services
                                        if s.get("type") == intent.get("serviceType")), None)
