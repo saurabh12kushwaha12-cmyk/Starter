@@ -55,6 +55,7 @@ class ChallengeTests(unittest.TestCase):
             app.TRACE_EVENTS.clear()
         mock.KEYS.clear()
         mock.CASES.clear()
+        mock.TOKENS.clear()
         self.alex = app.login("alex.morgan", "ReviewerPass-1001")
         self.session = self.alex["sessionId"]
 
@@ -234,11 +235,13 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(raised.exception.status, 401)
 
     def test_mock_api_enforces_customer_ownership_independently(self):
+        jordan = self.login("jordan.lee", "ReviewerPass-1002")
+        token = app.SESSIONS[jordan["sessionId"]]["accessToken"]
         with self.assertRaises(app.ServiceError) as raised:
             app.call_json(
                 "GET",
                 "/api/accounts/ACC-2001",
-                headers={"Authorization": "Bearer synthetic-CUST-1002"},
+                headers={"Authorization": "Bearer " + token},
                 retry_get=False,
             )
         self.assertEqual(raised.exception.status, 403)
@@ -293,7 +296,8 @@ class ChallengeTests(unittest.TestCase):
     def test_mock_case_api_idempotency_returns_existing_case(self):
         payload = {"customerId": "CUST-1001", "accountId": "ACC-2001",
                    "summary": "Synthetic test", "idempotencyKey": "test-idempotency-key"}
-        headers = {"Authorization": "Bearer synthetic-CUST-1001"}
+        token = app.SESSIONS[self.session]["accessToken"]
+        headers = {"Authorization": "Bearer " + token}
         created = app.call_json("POST", "/api/support-cases", payload=payload,
                                 headers=headers, retry_get=False)
         repeated = app.call_json("POST", "/api/support-cases", payload=payload,
