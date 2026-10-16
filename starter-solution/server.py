@@ -492,6 +492,10 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
             message = prior + " " + message
             session["pendingClarification"] = None
     intent, actual_mode = classify(message, session_id or "anonymous", trace_id)
+    emit("agent.invoked", trace_id, session_id=session_id or "anonymous", component="intent-classifier",
+         metadata={"mode": actual_mode, "intent": intent["intent"]})
+    emit("agent.invoked", trace_id, session_id=session_id or "anonymous", component="workflow-orchestrator",
+         metadata={"intent": intent["intent"]})
     emit("intent.classified", trace_id, session_id=session_id or "anonymous", metadata={"intent": intent["intent"], "aiMode": actual_mode})
     if session:
         with STATE_LOCK:
@@ -674,6 +678,7 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
     workflow_started = time.monotonic()
     trace_id = _new_trace()
     session = require_session(session_id, trace_id)
+    emit("request.received", trace_id, session_id=session_id, metadata={"requestType": "action_confirmation"})
     with STATE_LOCK:
         match = next(((key, value) for key, value in PENDING_ACTIONS.items()
                       if value.get("confirmationId") == confirmation_id), None)
@@ -796,24 +801,49 @@ def get_metrics() -> dict[str, Any]:
     failed_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.failed"}
     cancelled_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.cancelled"}
     terminal_count = max(1, len(terminal_traces))
-    durations = [ev.get("durationMs") for ev in rows if isinstance(ev.get("durationMs"), (int, float))]
+    workflow_durations = [ev.get("durationMs") for ev in terminal if isinstance(ev.get("durationMs"), (int, float))]
+    gemini_events = [ev for ev in rows if ev.get("eventType") in {"gemini.completed", "gemini.failure"}]
+    gemini_durations = [ev.get("durationMs") for ev in gemini_events if isinstance(ev.get("durationMs"), (int, float))]
     tool_events = [ev for ev in rows if ev.get("eventType") in {"tool.completed", "tool.failed"}]
+    tool_usage: dict[str, int] = {}
+    agent_usage: dict[str, int] = {}
+    failures_by_integration: dict[str, int] = {}
+    for ev in rows:
+        event_type = ev.get("eventType")
+        component = str(ev.get("component") or ev.get("metadata", {}).get("service") or "unknown")
+        if event_type == "tool.invoked":
+            tool_usage[component] = tool_usage.get(component, 0) + 1
+        if event_type == "agent.invoked":
+            agent_usage[component] = agent_usage.get(component, 0) + 1
+        if event_type in {"tool.failed", "action.failed", "integration.failure"}:
+            failures_by_integration[component] = failures_by_integration.get(component, 0) + 1
+    with STATE_LOCK:
+        pending_confirmation_count = sum(item.get("state", "pending") == "pending" for item in PENDING_ACTIONS.values())
+        executing_action_count = sum(item.get("state") == "executing" for item in PENDING_ACTIONS.values())
+    sessions = {ev.get("sessionId") for ev in rows
+                if ev.get("sessionId") and ev.get("sessionId") not in {"anonymous", "system"}}
     return {
         "totalRequests": len({ev.get("traceId") for ev in rows if ev.get("eventType") == "request.received"}),
+        "totalSessions": len(sessions),
         "resolvedRequests": len(resolved_traces), "escalatedRequests": len(escalated_traces),
         "failedRequests": len(failed_traces), "cancelledRequests": len(cancelled_traces),
         "clarificationRequests": sum(ev.get("eventType") == "clarification.requested" for ev in rows),
-        "pendingConfirmations": sum(ev.get("eventType") == "workflow.pending_confirmation" for ev in rows),
+        "pendingConfirmations": pending_confirmation_count, "actionsInProgress": executing_action_count,
         "resolutionRate": round(len(resolved_traces) / terminal_count * 100, 2),
         "escalationRate": round(len(escalated_traces) / terminal_count * 100, 2),
+        "humanHandoffRate": round(len(escalated_traces) / terminal_count * 100, 2),
         "failureRate": round(len(failed_traces) / terminal_count * 100, 2),
         "toolCallSuccessRate": round(sum(ev.get("eventType") == "tool.completed" for ev in tool_events) / max(1, len(tool_events)) * 100, 2),
+        "toolUsage": tool_usage, "agentUsage": agent_usage,
+        "failuresByIntegration": failures_by_integration,
         "authenticationFailures": sum(ev.get("eventType") == "authentication.failed" for ev in rows),
         "authorizationDenials": sum(ev.get("eventType") == "authorization.denied" for ev in rows),
         "geminiFailures": sum(ev.get("eventType") == "gemini.failure" for ev in rows),
+        "averageGeminiLatencyMs": round(sum(gemini_durations) / len(gemini_durations), 2) if gemini_durations else 0,
         "retryEvents": sum(ev.get("eventType") == "tool.retry" for ev in rows),
         "eventCount": len(rows), "traceCount": len(traces),
-        "averageRecordedDurationMs": round(sum(durations) / max(1, len(durations)), 2) if durations else 0,
+        "averageWorkflowDurationMs": round(sum(workflow_durations) / len(workflow_durations), 2) if workflow_durations else 0,
+        "averageRecordedDurationMs": round(sum(workflow_durations) / len(workflow_durations), 2) if workflow_durations else 0,
     }
 
 
