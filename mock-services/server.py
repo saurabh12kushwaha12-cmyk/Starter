@@ -267,16 +267,28 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/diagnostics":
                 data = self.json_body()
                 service_id = data.get("serviceId")
+                if not isinstance(service_id, str) or not service_id:
+                    return self.js(400, {"error": "service_id_required"})
                 account = account_for_customer(principal["customerId"])
                 owned = any(s.get("serviceId") == service_id for s in (account or {}).get("services", []))
                 if not self.is_support(principal) and not owned:
                     return self.js(403, {"error": "access_denied"})
-                if not service_id:
-                    return self.js(400, {"error": "service_id_required"})
+                mode = os.getenv("MOCK_DIAGNOSTICS_MODE", "success")
+                if mode == "unavailable":
+                    return self.js(503, {"error": "diagnostics_unavailable"})
+                if mode == "malformed":
+                    return self.js(200, {"unexpected": True})
+                if mode not in {"success", "fault", "inconclusive"}:
+                    return self.js(503, {"error": "diagnostics_mode_invalid"})
+                outcome = {
+                    "success": "no_device_fault_detected",
+                    "fault": "device_fault_detected",
+                    "inconclusive": "diagnostic_inconclusive",
+                }[mode]
                 return self.js(200, {
                     "diagnosticId": "DIAG-" + uuid.uuid4().hex[:6].upper(),
                     "serviceId": service_id,
-                    "result": "no_device_fault_detected",
+                    "result": outcome,
                 })
 
             if path == "/api/legacy/subscriber-status":
