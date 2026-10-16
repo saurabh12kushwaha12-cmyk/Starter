@@ -13,9 +13,10 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Check out repository and parent commit
         uses: actions/checkout@v4
         with:
+          fetch-depth: 2
           persist-credentials: true
 
       - name: Extract official challenge files
@@ -23,6 +24,11 @@ jobs:
         run: |
           set -euo pipefail
           test -f gemini_cx_challenge_resources.zip
+          changed="$(git diff-tree --no-commit-id --name-only -r HEAD)"
+          if [ "$changed" != "gemini_cx_challenge_resources.zip" ]; then
+            echo "For a safe one-time import, upload the ZIP in its own commit."
+            exit 1
+          fi
           mkdir -p /tmp/topcoder-resource-pack
           unzip -q gemini_cx_challenge_resources.zip -d /tmp/topcoder-resource-pack
           src=/tmp/topcoder-resource-pack/gemini_cx_challenge_resources
@@ -43,8 +49,9 @@ jobs:
           EOF
           rm -f gemini_cx_challenge_resources.zip
           rm -f .github/workflows/import-resources.yml
+          git reset --soft HEAD^
+          git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
           git commit -m "Import official Topcoder Gemini CX starter resources"
-          git push
+          git push --force-with-lease="refs/heads/main:$GITHUB_SHA" origin HEAD:refs/heads/main
