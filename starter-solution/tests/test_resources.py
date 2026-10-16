@@ -312,6 +312,25 @@ class ChallengeTests(unittest.TestCase):
             app.handle_chat("What plan am I using?", self.session)
         self.assertEqual(raised.exception.status, 401)
 
+    def test_operations_metrics_and_traces_are_support_agent_only(self):
+        with self.assertRaises(app.ServiceError) as raised:
+            app.require_operations_session(self.session)
+        self.assertEqual(raised.exception.status, 403)
+        support = self.login("support.agent", "ReviewerPass-3001")
+        allowed = app.require_operations_session(support["sessionId"])
+        self.assertEqual(allowed["customerId"], "AGENT-3001")
+
+    def test_escalation_summary_redacts_secrets_and_common_pii(self):
+        safe = app._safe_summary(
+            "Contact alex.morgan@example.test phone +1-415-555-1212 token=abc-secret Bearer secret-token"
+        )
+        self.assertNotIn("alex.morgan@example.test", safe)
+        self.assertNotIn("+1-415-555-1212", safe)
+        self.assertNotIn("abc-secret", safe)
+        self.assertNotIn("secret-token", safe)
+        self.assertIn("[REDACTED_EMAIL]", safe)
+        self.assertIn("[REDACTED_PHONE]", safe)
+
 
 if __name__ == "__main__":
     unittest.main()
