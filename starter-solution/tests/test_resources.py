@@ -157,6 +157,10 @@ class ChallengeTests(unittest.TestCase):
         records = [json.loads(x) for x in app.ESCALATIONS_FILE.read_text().splitlines()]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["traceId"], final["traceId"])
+        encoded = json.dumps(final["escalation"])
+        self.assertNotIn(self.session, encoded)
+        self.assertIn("idempotencyKeyRef", encoded)
+        self.assertNotIn("idempotencyKey", records[0].get("pendingAction", {}))
 
     def test_malformed_billing_response_escalates(self):
         with patch.dict(os.environ, {"MOCK_BILLING_MODE": "malformed"}):
