@@ -562,8 +562,7 @@ def _respond(answer: str, trace_id: str, session: dict[str, Any] | None, *, stat
              sources: list[str] | None = None, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {"traceId": trace_id, "answer": answer, "status": status,
                               "aiMode": "reviewer", "sources": sources or []}
-    if session:
-        result["sessionId"] = session["sessionId"]
+    # The browser already holds the login response's session ID; never echo that bearer-like value.
     if extra:
         result.update(extra)
     return result
