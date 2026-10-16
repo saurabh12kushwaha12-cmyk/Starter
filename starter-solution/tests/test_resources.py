@@ -8,6 +8,8 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
+import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -32,12 +34,28 @@ class ChallengeTests(unittest.TestCase):
         cls.mock_thread = threading.Thread(target=cls.mock_http.serve_forever, daemon=True)
         cls.mock_thread.start()
         cls.api = f"http://127.0.0.1:{cls.mock_http.server_port}"
+        cls.app_http = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        cls.app_http.daemon_threads = True
+        cls.app_thread = threading.Thread(target=cls.app_http.serve_forever, daemon=True)
+        cls.app_thread.start()
+        cls.app_url = f"http://127.0.0.1:{cls.app_http.server_port}"
 
     @classmethod
     def tearDownClass(cls):
+        cls.app_http.shutdown()
+        cls.app_http.server_close()
+        cls.app_thread.join(timeout=2)
         cls.mock_http.shutdown()
         cls.mock_http.server_close()
         cls.mock_thread.join(timeout=2)
+
+    def http_get(self, path, headers=None):
+        request = urllib.request.Request(self.app_url + path, headers=headers or {}, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return response.status, response.headers, response.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers, exc.read()
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -64,6 +82,33 @@ class ChallengeTests(unittest.TestCase):
 
     def login(self, username="alex.morgan", password="ReviewerPass-1001"):
         return app.login(username, password)
+
+    def test_http_security_headers_and_operations_route_permissions(self):
+        status, headers, _ = self.http_get("/")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(headers.get("Referrer-Policy"), "no-referrer")
+        self.assertIn("frame-ancestors 'none'", headers.get("Content-Security-Policy", ""))
+
+        for path in ("/metrics", "/traces/TRACE-ABCDEF123456", "/escalations"):
+            unauth_status, _, _ = self.http_get(path)
+            self.assertEqual(unauth_status, 401, path)
+            customer_status, _, _ = self.http_get(path, {"X-Session-ID": self.session})
+            self.assertEqual(customer_status, 403, path)
+
+        inquiry = app.handle_chat("What internet plan am I currently using?", self.session)
+        support = self.login("support.agent", "ReviewerPass-3001")
+        headers = {"X-Session-ID": support["sessionId"]}
+        metrics_status, _, metrics_body = self.http_get("/metrics", headers)
+        self.assertEqual(metrics_status, 200)
+        self.assertGreaterEqual(json.loads(metrics_body)["totalRequests"], 1)
+        trace_status, _, trace_body = self.http_get("/traces/" + inquiry["traceId"], headers)
+        self.assertEqual(trace_status, 200)
+        self.assertEqual(json.loads(trace_body)["traceId"], inquiry["traceId"])
+        escalation_status, _, escalation_body = self.http_get("/escalations", headers)
+        self.assertEqual(escalation_status, 200)
+        self.assertIn("records", json.loads(escalation_body))
 
     def test_resource_package_has_eight_scenarios_and_parseable_json(self):
         for i in range(1, 9):
