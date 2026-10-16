@@ -152,6 +152,18 @@ class ChallengeTests(unittest.TestCase):
         self.assertNotIn("synthetic-CUST-", server_token)
         self.assertIn(server_token, mock.TOKENS)
 
+    def test_invalid_session_id_types_return_controlled_authentication_error(self):
+        for invalid_session in (123, ["unhashable"], {"session": "invalid"}):
+            with self.subTest(invalid_session=invalid_session):
+                with self.assertRaises(app.ServiceError) as raised:
+                    app.handle_chat("What plan am I using?", invalid_session)
+                self.assertEqual(raised.exception.status, 401)
+
+    def test_login_rejects_missing_or_non_string_credentials_with_service_error(self):
+        with self.assertRaises(app.ServiceError) as raised:
+            app.login(None, "password")
+        self.assertEqual(raised.exception.status, 400)
+
     def test_protected_account_query_requires_authentication(self):
         result = app.handle_chat("What plan am I using?", None)
         self.assertEqual(result["status"], "authentication_required")
