@@ -74,7 +74,7 @@ def _safe_summary(value: Any, limit: int = 300) -> str:
 
 def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     """Remove secrets and sanitize metadata before it reaches logs or traces."""
-    if not metadata:
+    if not isinstance(metadata, dict) or not metadata:
         return {}
     sensitive_fragments = (
         "password", "token", "authorization", "api_key", "apikey", "secret",
@@ -82,6 +82,8 @@ def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     )
     safe: dict[str, Any] = {}
     for key, value in metadata.items():
+        if not isinstance(key, str):
+            continue
         normalized_key = re.sub(r"[^a-z0-9]", "", key.lower())
         if any(fragment.replace("_", "") in normalized_key for fragment in sensitive_fragments):
             continue
@@ -104,6 +106,27 @@ def _telemetry_session_ref(session_id: str) -> str:
     return "SESSION-" + hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12].upper()
 
 
+def _validate_telemetry_event(event: dict[str, Any]) -> None:
+    """Validate the application's structured event contract before persistence."""
+    required = {"eventId", "traceId", "sessionId", "timestamp", "eventType", "component", "status"}
+    allowed = required | {"durationMs", "metadata"}
+    if not isinstance(event, dict) or not required.issubset(event) or set(event) - allowed:
+        raise ValueError("invalid_telemetry_event_shape")
+    for key in ("eventId", "traceId", "sessionId", "timestamp", "eventType", "component"):
+        if not isinstance(event.get(key), str) or not event[key]:
+            raise ValueError("invalid_telemetry_event_field")
+    if not re.fullmatch(r"TRACE-[A-F0-9]{12}", event["traceId"]):
+        raise ValueError("invalid_telemetry_trace_id")
+    if event["status"] not in {"success", "failure", "pending", "denied"}:
+        raise ValueError("invalid_telemetry_status")
+    if "durationMs" in event:
+        duration = event["durationMs"]
+        if not isinstance(duration, (int, float)) or isinstance(duration, bool) or not math.isfinite(float(duration)) or duration < 0:
+            raise ValueError("invalid_telemetry_duration")
+    if "metadata" in event and not isinstance(event["metadata"], dict):
+        raise ValueError("invalid_telemetry_metadata")
+
+
 def emit(event_type: str, trace_id: str, status: str = "success", *, session_id: str = "system",
          component: str = "starter-app", duration_ms: float | None = None,
          metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -121,6 +144,7 @@ def emit(event_type: str, trace_id: str, status: str = "success", *, session_id:
     clean_metadata = _safe_metadata(metadata)
     if clean_metadata:
         event["metadata"] = clean_metadata
+    _validate_telemetry_event(event)
     line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
     with WRITE_LOCK:
         EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
