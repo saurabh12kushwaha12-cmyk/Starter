@@ -712,7 +712,7 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                     if profile.get("accountId") != session.get("accountId") and not _is_support(session):
                         raise ServiceError("authorization", "access_denied", 403)
                     postal = profile.get("postalCode")
-                    if not isinstance(postal, str) or not re.fullmatch(r"\\d{5}", postal):
+                    if not isinstance(postal, str) or not re.fullmatch(r"\d{5}", postal):
                         raise ServiceError("customer-profile", "postal_code_unavailable")
                     account = _account(session, account_id, trace_id)
                     network = _network(postal, session, trace_id)
