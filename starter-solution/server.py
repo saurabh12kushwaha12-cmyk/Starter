@@ -697,17 +697,19 @@ def get_metrics() -> dict[str, Any]:
     for row in rows:
         traces.setdefault(row.get("traceId", "unknown"), []).append(row)
     terminal = [ev for ev in rows if ev.get("eventType") in {"workflow.resolved", "workflow.failed", "workflow.escalated"}]
+    terminal_traces = {ev.get("traceId") for ev in terminal if ev.get("traceId")}
     resolved_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.resolved"}
     escalated_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.escalated"}
     failed_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.failed"}
+    terminal_count = max(1, len(terminal_traces))
     durations = [ev.get("durationMs") for ev in rows if isinstance(ev.get("durationMs"), (int, float))]
     tool_events = [ev for ev in rows if ev.get("eventType") in {"tool.completed", "tool.failed"}]
     return {
         "totalRequests": len({ev.get("traceId") for ev in rows if ev.get("eventType") == "request.received"}),
         "resolvedRequests": len(resolved_traces), "escalatedRequests": len(escalated_traces), "failedRequests": len(failed_traces),
-        "resolutionRate": round(len(resolved_traces) / max(1, len(terminal)) * 100, 2),
-        "escalationRate": round(len(escalated_traces) / max(1, len(terminal)) * 100, 2),
-        "failureRate": round(len(failed_traces) / max(1, len(terminal)) * 100, 2),
+        "resolutionRate": round(len(resolved_traces) / terminal_count * 100, 2),
+        "escalationRate": round(len(escalated_traces) / terminal_count * 100, 2),
+        "failureRate": round(len(failed_traces) / terminal_count * 100, 2),
         "toolCallSuccessRate": round(sum(ev.get("eventType") == "tool.completed" for ev in tool_events) / max(1, len(tool_events)) * 100, 2),
         "authenticationFailures": sum(ev.get("eventType") == "authentication.failed" for ev in rows),
         "authorizationDenials": sum(ev.get("eventType") == "authorization.denied" for ev in rows),
