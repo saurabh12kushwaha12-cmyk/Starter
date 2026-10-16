@@ -401,6 +401,24 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(created["caseId"], repeated["caseId"])
         self.assertEqual(len(mock.CASES), 1)
 
+    def test_idempotency_key_cannot_be_reused_for_another_account(self):
+        alex_token = app.SESSIONS[self.session]["accessToken"]
+        headers = {"Authorization": "Bearer " + alex_token}
+        key = "shared-test-key"
+        app.call_json("POST", "/api/support-cases",
+                      payload={"customerId": "CUST-1001", "accountId": "ACC-2001",
+                               "summary": "Alex test", "idempotencyKey": key},
+                      headers=headers, retry_get=False)
+        jordan = self.login("jordan.lee", "ReviewerPass-1002")
+        jordan_token = app.SESSIONS[jordan["sessionId"]]["accessToken"]
+        with self.assertRaises(app.ServiceError) as raised:
+            app.call_json("POST", "/api/support-cases",
+                          payload={"customerId": "CUST-1002", "accountId": "ACC-2002",
+                                   "summary": "Jordan test", "idempotencyKey": key},
+                          headers={"Authorization": "Bearer " + jordan_token}, retry_get=False)
+        self.assertEqual(raised.exception.status, 409)
+        self.assertEqual(len(mock.CASES), 1)
+
     def test_logout_revokes_session_and_pending_confirmation(self):
         pending = app.handle_chat("Create a support case for my internet issue", self.session)
         self.assertEqual(pending["status"], "confirmation_required")
