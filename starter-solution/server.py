@@ -78,7 +78,7 @@ def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     sensitive_fragments = (
         "password", "token", "authorization", "api_key", "apikey", "secret",
-        "credential", "testpassword", "email", "sessionid", "session_id",
+        "credential", "testpassword", "email", "sessionid", "session_id", "idempotency",
     )
     safe: dict[str, Any] = {}
     for key, value in metadata.items():
@@ -848,7 +848,7 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
                                "Inspect the case-management service and verify the idempotency key before any retry.",
                                session["customerId"],
                                pending_action={"type": "create_support_case", "accountId": account_id,
-                                               "idempotencyKeyRef": hashlib.sha256(action_key.encode("utf-8")).hexdigest()[:12],
+                                               "keyFingerprint": hashlib.sha256(action_key.encode("utf-8")).hexdigest()[:12],
                                                "summary": action["summary"], "executionOutcome": "unverified"})
         with STATE_LOCK:
             PENDING_ACTIONS.pop(action_key, None)
@@ -865,7 +865,7 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
             "Inspect the case-management trace and verify the idempotency key before retrying.",
             session["customerId"],
             pending_action={"type": "create_support_case", "accountId": account_id,
-                            "idempotencyKeyRef": hashlib.sha256(action_key.encode("utf-8")).hexdigest()[:12],
+                            "keyFingerprint": hashlib.sha256(action_key.encode("utf-8")).hexdigest()[:12],
                             "summary": action["summary"], "executionOutcome": "unverified"})
         emit("workflow.escalated", trace_id, "pending", session_id=session_id,
              metadata={"reason": "internal_processing_failure"})
