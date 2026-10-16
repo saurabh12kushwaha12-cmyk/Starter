@@ -1,0 +1,12 @@
+{
+  "scenarioId": "SCN-006",
+  "title": "Legacy subscriber status",
+  "authenticatedUser": "CUST-1001",
+  "expected": [
+    "Call legacy API",
+    "Parse XML",
+    "Normalize",
+    "Map errors",
+    "Record trace"
+  ]
+}
