@@ -210,6 +210,30 @@ class ChallengeTests(unittest.TestCase):
         self.assertNotIn("test-secret-key", json.dumps(trace))
         self.assertNotIn("api_key", json.dumps(trace))
 
+    def test_historical_escalations_are_redacted_on_read(self):
+        legacy_record = {
+            "escalationId": "ESC-LEGACY0001", "traceId": "TRACE-ABCDEF123456",
+            "customerId": "CUST-1001",
+            "requestSummary": "My password is OldSecret123; email alex.morgan@example.test",
+            "completedSteps": ["request received"],
+            "reason": "api_key=LegacyApiSecret",
+            "errorSummary": "token=LegacyTokenSecret",
+            "recommendedNextStep": "Review the sanitized record",
+            "evidence": [{"eventType": "authentication.failed",
+                           "metadata": {"sessionId": self.session, "api_key": "NestedSecret"}}],
+        }
+        app.ESCALATIONS_FILE.write_text(json.dumps(legacy_record) + "\n", encoding="utf-8")
+        result = app.get_escalations()
+        self.assertEqual(result["count"], 1)
+        encoded = json.dumps(result)
+        for secret in ("OldSecret123", "alex.morgan@example.test", "LegacyApiSecret",
+                       "LegacyTokenSecret", "NestedSecret", self.session):
+            self.assertNotIn(secret, encoded)
+
+    def test_telemetry_schema_validation_rejects_invalid_trace_id(self):
+        with self.assertRaises(ValueError):
+            app.emit("request.received", "not-a-trace-id")
+
     def test_gemini_prompt_redacts_credentials_and_omits_assistant_history(self):
         payload = {
             "candidates": [{"content": {"parts": [{"text": json.dumps({
