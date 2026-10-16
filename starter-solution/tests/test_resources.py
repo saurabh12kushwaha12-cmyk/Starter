@@ -181,9 +181,13 @@ class ChallengeTests(unittest.TestCase):
         for event in trace["events"]:
             self.assertTrue(required.issubset(event))
             self.assertEqual(event["traceId"], result["traceId"])
+            self.assertNotEqual(event["sessionId"], self.session)
             encoded = json.dumps(event).lower()
             self.assertNotIn("reviewerpass", encoded)
             self.assertNotIn("accesstoken", encoded)
+            self.assertNotIn(self.session.lower(), encoded)
+        authenticated_refs = {e["sessionId"] for e in trace["events"] if e["sessionId"].startswith("SESSION-")}
+        self.assertEqual(len(authenticated_refs), 1)
         metrics = app.get_metrics()
         self.assertGreaterEqual(metrics["totalRequests"], 1)
         self.assertGreaterEqual(metrics["eventCount"], trace["eventCount"])
