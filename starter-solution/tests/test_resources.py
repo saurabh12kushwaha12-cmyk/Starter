@@ -162,7 +162,7 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(records[0]["traceId"], final["traceId"])
         encoded = json.dumps(final["escalation"])
         self.assertNotIn(self.session, encoded)
-        self.assertIn("idempotencyKeyRef", encoded)
+        self.assertIn("keyFingerprint", encoded)
         self.assertNotIn("idempotencyKey", records[0].get("pendingAction", {}))
 
     def test_malformed_billing_response_escalates(self):
