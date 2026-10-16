@@ -57,21 +57,36 @@ def utcnow() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def _safe_summary(value: Any, limit: int = 300) -> str:
+    """Keep enough context for support while redacting common secret/PII patterns."""
+    summary = "".join(ch for ch in str(value) if ch.isprintable())[:max(limit * 2, limit)]
+    summary = re.sub(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", summary)
+    summary = re.sub(r"(?i)\b(api[_ -]?key|password|token|secret|authorization)\s*[:=]\s*[^\s,;]+",
+                     r"\1=[REDACTED]", summary)
+    summary = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[REDACTED_EMAIL]", summary, flags=re.I)
+    summary = re.sub(r"(?<!\w)\+?\d[\d ().-]{8,}\d(?!\w)", "[REDACTED_PHONE]", summary)
+    return summary[:limit]
+
+
 def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Remove values that must never make it to logs/traces."""
+    """Remove secrets and sanitize metadata before it reaches logs or traces."""
     if not metadata:
         return {}
     sensitive = {"password", "token", "accessToken", "authorization", "apiKey", "secret", "testPassword", "email"}
+    sensitive_keys = {s.lower() for s in sensitive}
     safe: dict[str, Any] = {}
     for key, value in metadata.items():
-        if key.lower() in {s.lower() for s in sensitive}:
+        if key.lower() in sensitive_keys:
             continue
         if isinstance(value, dict):
             safe[key] = _safe_metadata(value)
-        elif isinstance(value, (str, int, float, bool)) or value is None:
-            safe[key] = value[:240] if isinstance(value, str) else value
+        elif isinstance(value, str):
+            safe[key] = _safe_summary(value, 240)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            safe[key] = value
         elif isinstance(value, list):
-            safe[key] = [_safe_metadata(x) if isinstance(x, dict) else x for x in value[:20]]
+            safe[key] = [_safe_metadata(x) if isinstance(x, dict) else _safe_summary(x, 240) if isinstance(x, str) else x
+                         for x in value[:20]]
     return safe
 
 
@@ -235,6 +250,16 @@ def _session_headers(session: dict[str, Any]) -> dict[str, str]:
     if not isinstance(token, str) or not token:
         raise ServiceError("authentication", "invalid_or_expired_authentication", 401)
     return {"Authorization": "Bearer " + token}
+
+
+def require_operations_session(session_id: str | None) -> dict[str, Any]:
+    trace_id = _new_trace()
+    session = require_session(session_id, trace_id)
+    if not _is_support(session):
+        emit("authorization.denied", trace_id, "denied", session_id=session["sessionId"],
+             metadata={"reason": "operations_role_required"})
+        raise ServiceError("authorization", "operations_access_denied", 403)
+    return session
 
 
 def authorized_account(session: dict[str, Any], requested_account: str | None, trace_id: str) -> str:
@@ -434,17 +459,17 @@ def _escalate(trace_id: str, session_id: str, request_summary: str, reason: str,
     for event in events:
         event_type = event.get("eventType")
         event_metadata = event.get("metadata", {})
-        component = event_metadata.get("service") if event_type == "workflow.failed" else event.get("component")
-        if event_type in {"tool.invoked", "tool.completed", "tool.failed", "action.failed"} and component:
+        component = event_metadata.get("service") if event_type in {"workflow.failed", "integration.failure"} else event.get("component")
+        if event_type in {"tool.invoked", "tool.completed", "tool.failed", "action.failed", "integration.failure"} and component:
             if component not in accessed:
                 accessed.append(component)
-        if event_type in {"tool.failed", "action.failed"} or (
+        if event_type in {"tool.failed", "action.failed", "integration.failure"} or (
             event_type == "workflow.failed" and event.get("status") == "failure"
         ):
             failed.append({"component": component or "unknown", "eventType": event_type,
                            "status": event.get("status", "failure"),
                            "metadata": event_metadata})
-        if event_type in {"tool.completed", "tool.failed", "authorization.denied",
+        if event_type in {"tool.completed", "tool.failed", "integration.failure", "authorization.denied",
                           "confirmation.received", "action.failed", "gemini.failure"}:
             evidence.append({"eventId": event.get("eventId"), "eventType": event_type,
                              "component": component, "status": event.get("status"),
@@ -453,7 +478,7 @@ def _escalate(trace_id: str, session_id: str, request_summary: str, reason: str,
         "escalationId": "ESC-" + uuid.uuid4().hex[:10].upper(),
         "traceId": trace_id,
         "customerId": customer_id,
-        "requestSummary": request_summary[:300],
+        "requestSummary": _safe_summary(request_summary, 300),
         "verifiedContext": {"customerId": customer_id, "authenticatedSession": bool(session_id and session_id not in {"system", "anonymous"})},
         "completedSteps": list(dict.fromkeys(completed_steps + [
             f"{event.get('component')} completed" for event in events
