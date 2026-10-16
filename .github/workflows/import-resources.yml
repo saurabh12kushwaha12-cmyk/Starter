@@ -1,0 +1,50 @@
+name: Import Topcoder challenge starter
+
+on:
+  push:
+    paths:
+      - "gemini_cx_challenge_resources.zip"
+
+permissions:
+  contents: write
+
+jobs:
+  extract-and-commit:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Extract official challenge files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f gemini_cx_challenge_resources.zip
+          mkdir -p /tmp/topcoder-resource-pack
+          unzip -q gemini_cx_challenge_resources.zip -d /tmp/topcoder-resource-pack
+          src=/tmp/topcoder-resource-pack/gemini_cx_challenge_resources
+          test -f "$src/starter-solution/server.py"
+          test -d "$src/mock-services"
+          find "$src" -type d -name __pycache__ -prune -exec rm -rf {} +
+          find "$src" -type f -name '*.pyc' -delete
+          cp -a "$src/." .
+          cat > .gitignore <<'EOF'
+          .env
+          .venv/
+          venv/
+          __pycache__/
+          *.py[cod]
+          *.log
+          *.jsonl
+          .DS_Store
+          EOF
+          rm -f gemini_cx_challenge_resources.zip
+          rm -f .github/workflows/import-resources.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Import official Topcoder Gemini CX starter resources"
+          git push
