@@ -585,10 +585,14 @@ def _deterministic_intent(message: str) -> dict[str, Any]:
         intent = "create_case"
     elif any(x in text for x in ("legacy", "subscriber status", "line status", "service status")):
         intent = "legacy_status"
+    elif any(x in text for x in (
+        "not working", "unavailable", "down", "no connection", "no service",
+        "can't connect", "cannot connect", "slow", "outage", "disconnect",
+        "keeps dropping", "intermittent",
+    )):
+        intent = "service_issue"
     elif any(x in text for x in ("plan", "subscription", "currently using", "my package")):
         intent = "account_plan"
-    elif any(x in text for x in ("not working", "not working", "unavailable", "down", "no connection", "slow", "outage", "disconnect")):
-        intent = "service_issue"
     elif text.strip() in {"internet", "home internet", "mobile", "home broadband", "wifi", "wi-fi"}:
         intent = "service_issue"
     else:
