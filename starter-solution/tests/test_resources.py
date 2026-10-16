@@ -436,10 +436,15 @@ class ChallengeTests(unittest.TestCase):
             result = app.handle_chat("Show my bill", self.session)
         self.assertEqual(result["status"], "escalated")
         record = result["escalation"]
+        schema = json.loads((ROOT / "schemas" / "escalation-record.schema.json").read_text(encoding="utf-8"))
+        self.assertTrue(set(schema["required"]).issubset(record))
+        self.assertFalse(set(record) - set(schema["properties"]))
         for field in ("verifiedContext", "enterpriseSystemsAccessed", "evidence",
                       "failedTools", "errorSummary", "pendingAction"):
             self.assertIn(field, record)
         self.assertIn("billing-service", record["enterpriseSystemsAccessed"])
+        self.assertTrue(any(e["eventType"] == "tool.failed" and e["component"] == "billing-service"
+                            for e in app.get_trace(result["traceId"])["events"]))
 
     def test_billing_rejects_non_numeric_amount(self):
         with patch.object(app, "call_json", return_value={
