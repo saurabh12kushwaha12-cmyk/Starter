@@ -227,6 +227,9 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(result["status"], "confirmation_required")
         cancelled = app.confirm_action(self.session, result["confirmationId"], False)
         self.assertEqual(cancelled["status"], "cancelled")
+        cancel_events = app.get_trace(cancelled["traceId"])["events"]
+        cancelled_workflow = next(e for e in cancel_events if e["eventType"] == "workflow.cancelled")
+        self.assertEqual(cancelled_workflow["status"], "success")
         self.assertEqual(len(mock.CASES), 0)
 
     def test_case_service_failure_escalates_without_false_success(self):
