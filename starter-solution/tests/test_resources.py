@@ -522,6 +522,34 @@ class ChallengeTests(unittest.TestCase):
                             and e["component"] == "account-service" for e in events))
         self.assertTrue(any(e["eventType"] == "tool.retry" for e in events))
 
+    def test_case_write_retries_once_only_when_idempotency_key_is_present(self):
+        trace_id = app._new_trace()
+        payload = {"customerId": "CUST-1001", "accountId": "ACC-2001",
+                   "summary": "Synthetic test", "idempotencyKey": "safe-retry-key"}
+        headers = app._session_headers(app.SESSIONS[self.session])
+        success_body = json.dumps({"caseId": "CASE-ABCDEF12", "status": "open"}).encode("utf-8")
+        with patch.object(app, "request_raw", side_effect=[
+            app.ServiceError("case-management", "temporarily_unavailable", 503),
+            (201, success_body, "application/json"),
+        ]) as request:
+            result = app.call_json("POST", "/api/support-cases", payload=payload,
+                                   headers=headers, retry_get=False, retry_safe_post=True,
+                                   trace_id=trace_id, session_id=self.session,
+                                   component="case-management")
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(result["caseId"], "CASE-ABCDEF12")
+        self.assertTrue(any(e["eventType"] == "tool.retry" for e in app.get_trace(trace_id)["events"]))
+
+    def test_case_write_without_idempotency_key_is_not_retried(self):
+        trace_id = app._new_trace()
+        with patch.object(app, "request_raw",
+                          side_effect=app.ServiceError("case-management", "temporarily_unavailable", 503)) as request:
+            with self.assertRaises(app.ServiceError):
+                app.call_json("POST", "/api/support-cases", payload={"summary": "synthetic"},
+                              retry_get=False, retry_safe_post=True, trace_id=trace_id,
+                              session_id=self.session, component="case-management")
+        self.assertEqual(request.call_count, 1)
+
     def test_mock_enterprise_api_rejects_missing_bearer_token(self):
         with self.assertRaises(app.ServiceError) as raised:
             app.call_json("GET", "/api/customers/CUST-1001", retry_get=False)
