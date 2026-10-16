@@ -66,9 +66,11 @@ The live model classifies and extracts a constrained intent only. It never recei
 - `POST /auth/login` — authenticate against the supplied synthetic mock service
 - `POST /chat` — classify a request and run guarded workflows
 - `POST /confirm` — confirm or cancel the pending support-case action
-- `GET /traces/{TRACE-ID}` — structured events for one request
-- `GET /metrics` — metrics computed from the event log
-- `GET /escalations` — recent synthetic escalation records
+- `GET /traces/{TRACE-ID}` — structured events for one request (**support-agent session required**)
+- `GET /metrics` — metrics computed from the event log (**support-agent session required**)
+- `GET /escalations` — recent synthetic escalation records (**support-agent session required**)
+
+Send the active application session in the `X-Session-ID` header for these three operations endpoints. Their traces contain a stable, hashed session reference—not the actual session ID used to authenticate. Never share an application session ID.
 
 The application writes `starter-solution/events.jsonl` and `starter-solution/escalations.jsonl` by default. Set `EVENTS_FILE` and `ESCALATIONS_FILE` to override their paths.
 
@@ -81,6 +83,7 @@ The application writes `starter-solution/events.jsonl` and `starter-solution/esc
 - safe GET retries, bounded network timeouts, malformed response checks, legacy XML validation and error mapping
 - escalation on unresolved integration failures without claiming false success
 - request trace IDs, event-derived metrics, reviewer/live/degraded mode indications
+- hashed session references in telemetry; operational trace/metrics/escalation routes restricted to the synthetic support-agent role
 
 ## Architecture, evaluation evidence, deployment and demo
 
