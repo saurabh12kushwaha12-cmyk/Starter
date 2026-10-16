@@ -257,6 +257,15 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(result["status"], "escalated")
         self.assertNotIn("$0.00", result["answer"])
 
+    def test_multi_system_legacy_failure_escalates_instead_of_claiming_health(self):
+        jordan = self.login("jordan.lee", "ReviewerPass-1002")
+        with patch.dict(os.environ, {"MOCK_LEGACY_MODE": "unavailable"}):
+            result = app.handle_chat("My mobile service is slow", jordan["sessionId"])
+        self.assertEqual(result["status"], "escalated")
+        self.assertIn("could not verify", result["answer"].lower())
+        self.assertIn("legacy-adapter", result["escalation"]["enterpriseSystemsAccessed"])
+        self.assertTrue(result["escalation"]["failedTools"])
+
 
 if __name__ == "__main__":
     unittest.main()
