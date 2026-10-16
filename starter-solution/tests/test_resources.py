@@ -234,7 +234,20 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(result["status"], "resolved")
         self.assertEqual(result["data"]["accountId"], "ACC-2001")
         self.assertEqual(result["data"]["serviceId"], "SVC-5001")
+        self.assertEqual(result["data"]["serviceStatus"], "active")
+        self.assertEqual(result["data"]["networkStatus"], "degraded")
         self.assertEqual(result["data"]["errorCode"], "0")
+
+    def test_legacy_business_error_without_record_ids_is_mapped_and_traced(self):
+        trace_id = app._new_trace()
+        legacy = app._legacy_status("ACC-2001", "SVC-INVALID", app.SESSIONS[self.session], trace_id)
+        self.assertEqual(legacy["errorCode"], "102")
+        self.assertEqual(legacy["error"], "service_not_found")
+        self.assertIsNone(legacy["accountId"])
+        self.assertIsNone(legacy["serviceId"])
+        events = app.get_trace(trace_id)["events"]
+        self.assertTrue(any(e["eventType"] == "tool.failed" and e["component"] == "legacy-adapter"
+                            for e in events))
 
     def test_case_requires_confirmation_then_creates_one(self):
         result = app.handle_chat("Create a support case for my internet issue", self.session)
