@@ -192,10 +192,17 @@ def request_raw(method: str, path: str, *, payload: dict[str, Any] | None = None
 
 def call_json(method: str, path: str, *, payload: dict[str, Any] | None = None,
               headers: dict[str, str] | None = None, retry_get: bool = True,
-              trace_id: str | None = None, session_id: str = "system",
+              retry_safe_post: bool = False, trace_id: str | None = None,
+              session_id: str = "system",
               component: str = "enterprise-integration") -> dict[str, Any]:
-    """Call a mock enterprise endpoint with bounded retries for read-only requests only."""
-    attempts = 2 if method == "GET" and retry_get else 1
+    """Retry reads, plus the support-case write only when a validated idempotency key is supplied."""
+    idempotent_case_post = (
+        method == "POST" and path == "/api/support-cases" and retry_safe_post
+        and isinstance(payload, dict)
+        and isinstance(payload.get("idempotencyKey"), str)
+        and bool(payload["idempotencyKey"].strip())
+    )
+    attempts = 2 if (method == "GET" and retry_get) or idempotent_case_post else 1
     last_error: ServiceError | None = None
     for attempt in range(attempts):
         if attempt > 0 and trace_id:
@@ -1061,7 +1068,8 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
         payload = {"customerId": session["customerId"], "accountId": account_id,
                    "summary": action["summary"], "idempotencyKey": action_key}
         emit("tool.invoked", trace_id, "pending", session_id=session_id, component="case-management", metadata={"accountId": account_id})
-        created = call_json("POST", "/api/support-cases", payload=payload, headers=_session_headers(session), retry_get=False,
+        created = call_json("POST", "/api/support-cases", payload=payload,
+                            headers=_session_headers(session), retry_get=False, retry_safe_post=True,
                             trace_id=trace_id, session_id=session_id, component="case-management")
         case_id = created.get("caseId")
         if not case_id or created.get("status") != "open":
