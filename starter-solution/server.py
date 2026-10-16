@@ -900,6 +900,33 @@ def get_trace(trace_id: str) -> dict[str, Any]:
     return {"traceId": trace_id, "events": events, "eventCount": len(events)}
 
 
+def get_escalations(limit: int = 100) -> dict[str, Any]:
+    """Load recent escalation records safely, including records from older local versions."""
+    records: list[dict[str, Any]] = []
+    if ESCALATIONS_FILE.exists():
+        try:
+            with ESCALATIONS_FILE.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    safe_record = _safe_metadata(record)
+                    for field, size in (("requestSummary", 300), ("errorSummary", 240),
+                                        ("reason", 240), ("recommendedNextStep", 240)):
+                        if field in record:
+                            safe_record[field] = _safe_summary(record[field], size)
+                    records.append(safe_record)
+        except OSError:
+            return {"records": [], "count": 0}
+    count = len(records)
+    return {"records": records[-max(1, min(int(limit), 1000)):], "count": count}
+
+
 def get_metrics() -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     if EVENTS_FILE.exists():
@@ -1078,13 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
                 require_operations_session(self.headers.get("X-Session-ID"))
             except ServiceError as exc:
                 return self._send(exc.status or 403, {"error": exc.safe_message})
-            records = []
-            try:
-                with ESCALATIONS_FILE.open(encoding="utf-8") as handle:
-                    records = [json.loads(line) for line in handle if line.strip()]
-            except FileNotFoundError:
-                pass
-            return self._send(200, {"records": records[-100:], "count": len(records)})
+            return self._send(200, get_escalations())
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self) -> None:
