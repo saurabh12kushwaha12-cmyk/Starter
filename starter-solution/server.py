@@ -442,35 +442,69 @@ def _diagnostics(service_id: str, session: dict[str, Any], trace_id: str) -> dic
 
 
 def _legacy_status(account_id: str, service_id: str, session: dict[str, Any], trace_id: str) -> dict[str, Any]:
-    emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"], component="legacy-adapter", metadata={"accountId": account_id})
+    """Call the legacy XML service and return only a validated normalized response."""
+    component = "legacy-adapter"
+    emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"],
+         component=component, metadata={"accountId": account_id, "serviceId": service_id})
     root = ET.Element("SubscriberStatusRequest")
     ET.SubElement(root, "AccountNumber").text = account_id
     ET.SubElement(root, "ServiceNumber").text = service_id
     xml_body = ET.tostring(root, encoding="unicode")
-    status, raw, content_type = request_raw("POST", "/api/legacy/subscriber-status", payload={"_xml": xml_body},
-                                            headers=_session_headers(session), content_type="application/xml")
+
     try:
+        status, raw, content_type = request_raw(
+            "POST", "/api/legacy/subscriber-status", payload={"_xml": xml_body},
+            headers=_session_headers(session), content_type="application/xml")
+        if "xml" not in content_type.lower():
+            raise ServiceError("legacy-service", "invalid_legacy_content_type", status)
         data = ET.fromstring(raw)
+        if data.tag != "SubscriberStatusResponse":
+            raise ServiceError("legacy-service", "invalid_legacy_response_root", status)
+        normalized = {
+            "accountId": data.findtext("ACCT_NO"),
+            "serviceId": data.findtext("SVC_NO"),
+            "serviceStatus": data.findtext("SVC_STAT") or "unknown",
+            "networkStatus": data.findtext("NET_STAT") or "unknown",
+            "errorCode": data.findtext("ERR_CD") or "900",
+            "responseTimestamp": data.findtext("RESP_TS"),
+        }
+        if normalized["accountId"] != account_id or normalized["serviceId"] != service_id:
+            raise ServiceError("legacy-service", "legacy_response_identity_mismatch", status)
+        code = normalized["errorCode"]
+        if not re.fullmatch(r"\d{3}", code):
+            raise ServiceError("legacy-service", "malformed_legacy_error_code", status)
+        if code == "0":
+            if (normalized["serviceStatus"] == "unknown"
+                    or normalized["networkStatus"] == "unknown"
+                    or not isinstance(normalized["responseTimestamp"], str)
+                    or not normalized["responseTimestamp"].strip()):
+                raise ServiceError("legacy-service", "incomplete_legacy_success_response", status)
+        else:
+            labels = {
+                "101": "account_not_found", "102": "service_not_found",
+                "205": "legacy_auth_rejected", "301": "legacy_required_field_missing",
+                "429": "legacy_rate_limited", "503": "legacy_unavailable",
+                "900": "legacy_unknown_error",
+            }
+            normalized["error"] = labels.get(code, "legacy_error")
+        emit("tool.completed" if code == "0" else "tool.failed", trace_id,
+             "success" if code == "0" else "failure", session_id=session["sessionId"],
+             component=component,
+             metadata={"errorCode": code, "serviceStatus": normalized["serviceStatus"],
+                       "networkStatus": normalized["networkStatus"]})
+        return normalized
     except ET.ParseError as exc:
-        raise ServiceError("legacy-service", "malformed_legacy_response", status) from exc
-    normalized = {
-        "accountId": data.findtext("ACCT_NO"),
-        "serviceId": data.findtext("SVC_NO"),
-        "serviceStatus": data.findtext("SVC_STAT") or "unknown",
-        "networkStatus": data.findtext("NET_STAT") or "unknown",
-        "errorCode": data.findtext("ERR_CD") or "900",
-        "responseTimestamp": data.findtext("RESP_TS"),
-    }
-    if normalized["accountId"] != account_id or normalized["serviceId"] != service_id:
-        raise ServiceError("legacy-service", "legacy_response_identity_mismatch")
-    code = normalized["errorCode"]
-    if code != "0":
-        labels = {"101": "account_not_found", "102": "service_not_found", "205": "legacy_auth_rejected", "301": "legacy_required_field_missing", "429": "legacy_rate_limited", "503": "legacy_unavailable", "900": "legacy_unknown_error"}
-        normalized["error"] = labels.get(code, "legacy_error")
-    emit("tool.completed" if code == "0" else "tool.failed", trace_id,
-         "success" if code == "0" else "failure", session_id=session["sessionId"], component="legacy-adapter",
-         metadata={"errorCode": code, "serviceStatus": normalized["serviceStatus"], "networkStatus": normalized["networkStatus"]})
-    return normalized
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component=component, metadata={"reason": "malformed_legacy_response"})
+        raise ServiceError("legacy-service", "malformed_legacy_response") from exc
+    except ServiceError as exc:
+        # call_raw failures are mapped here too, so every failed legacy operation is traceable once.
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component=component, metadata={"reason": exc.safe_message, "httpStatus": exc.status})
+        if exc.service == "legacy-service":
+            raise
+        raise ServiceError("legacy-service", exc.safe_message, exc.status) from exc
+
 
 
 def _gemini_intent(message: str, prior_messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -797,8 +831,6 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                         legacy = _legacy_status(account_id, service_id, session, trace_id)
                     except ServiceError as legacy_exc:
                         legacy_error = legacy_exc
-                        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
-                             component="legacy-adapter", metadata={"reason": legacy_exc.safe_message})
 
                     legacy_business_error = legacy.get("error") if legacy else None
                     if network.get("status") in {"degraded", "outage", "down"}:
