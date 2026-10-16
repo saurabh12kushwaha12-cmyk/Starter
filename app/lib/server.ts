@@ -37,7 +37,17 @@ export function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export async function ensureSchema() {
+let schemaPromise: Promise<ReturnType<typeof getDb>> | null = null;
+
+export function ensureSchema() {
+  if (!schemaPromise) {
+    schemaPromise = initializeSchema();
+    schemaPromise.catch(() => { schemaPromise = null; });
+  }
+  return schemaPromise;
+}
+
+async function initializeSchema() {
   const sql = getDb();
   await sql`CREATE TABLE IF NOT EXISTS starter_users (
     username TEXT PRIMARY KEY,
