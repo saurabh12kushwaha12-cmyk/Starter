@@ -601,16 +601,18 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
             conv["lastTraceId"] = trace_id
             conv["messages"] = conv["messages"][-12:]
     result = _respond("", trace_id, session, status="resolved", extra={"intent": intent["intent"], "aiMode": actual_mode})
-    action_rejected = intent["intent"] == "create_case" and _negates_support_case(original_message)
+    declines_case = _negates_support_case(original_message)
+    # Cancel an outstanding case confirmation even if the new message also asks a separate question.
+    if declines_case and session:
+        with STATE_LOCK:
+            for key, pending_action in list(PENDING_ACTIONS.items()):
+                if pending_action.get("sessionId") == session_id and pending_action.get("state", "pending") == "pending":
+                    PENDING_ACTIONS.pop(key, None)
+                    emit("action.cancelled", trace_id, session_id=session_id, component="case-management",
+                         metadata={"reason": "customer_declined_case"})
+    action_rejected = intent["intent"] == "create_case" and declines_case
 
     if action_rejected:
-        if session:
-            with STATE_LOCK:
-                for key, pending_action in list(PENDING_ACTIONS.items()):
-                    if pending_action.get("sessionId") == session_id and pending_action.get("state", "pending") == "pending":
-                        PENDING_ACTIONS.pop(key, None)
-                        emit("action.cancelled", trace_id, session_id=session_id, component="case-management",
-                             metadata={"reason": "customer_declined_case"})
         result.update(answer="Understood. I will not create a support case.", status="resolved", intent="action_declined")
     elif intent["intent"] == "other":
         if session:
