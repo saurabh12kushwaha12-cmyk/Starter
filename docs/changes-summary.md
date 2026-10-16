@@ -29,7 +29,7 @@
 - A normal customer cannot read another customer's account data through the application or directly from the mock API.
 - Operations endpoints require the synthetic support-agent role.
 - Consequential support-case creation requires explicit confirmation and downstream verification.
-- POST actions are not automatically retried; GET retries are bounded.
+- GET retries are bounded. Support-case POST gets at most one retry only when the idempotency key is present and non-empty; other consequential writes are not automatically retried.
 - Errors, malformed responses and provider failures do not silently become success responses.
 - Temporary bootstrap/bundle files used to import the ZIP content have been removed from the repository.
 
