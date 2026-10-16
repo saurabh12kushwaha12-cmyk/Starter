@@ -664,7 +664,9 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
             session["pendingClarification"] = original_message
         result.update(answer="I can help with your plan, bill, internet/mobile service issue, subscriber status, or support case. Which of these would you like to work on?", status="clarification")
         emit("clarification.requested", trace_id, "pending", session_id=session_id or "anonymous", metadata={"field": "intent"})
-    elif intent.get("clarificationNeeded") or (intent["intent"] == "service_issue" and not intent.get("serviceType")):
+    elif intent.get("clarificationNeeded") or (
+        intent["intent"] in {"service_issue", "legacy_status"} and not intent.get("serviceType")
+    ):
         missing_field = "details"
         if intent["intent"] == "service_issue" and not intent.get("serviceType"):
             question = "Which service is affected: home internet or mobile?"
@@ -704,9 +706,13 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                 elif intent["intent"] == "legacy_status":
                     account = _account(session, account_id, trace_id)
                     services = account.get("services") or []
-                    service_id = next((s.get("serviceId") for s in services if s.get("serviceId")), None)
+                    requested_service_type = intent.get("serviceType")
+                    service_id = next(
+                        (s.get("serviceId") for s in services
+                         if s.get("type") == requested_service_type and s.get("serviceId")),
+                        None)
                     if not service_id:
-                        raise ServiceError("account-service", "service_id_unavailable")
+                        raise ServiceError("account-service", "requested_service_unavailable")
                     legacy = _legacy_status(account_id, service_id, session, trace_id)
                     if legacy.get("error"):
                         escalation = _escalate(
