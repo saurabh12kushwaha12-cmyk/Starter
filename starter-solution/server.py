@@ -332,8 +332,11 @@ def _gemini_intent(message: str, prior_messages: list[dict[str, str]]) -> dict[s
         "contents": [{"role": "user", "parts": [{"text": json.dumps({"message": message, "recent_context": prior_messages[-4:]}, ensure_ascii=False)}]}],
         "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(GEMINI_MODEL, safe='')}:generateContent?key={urllib.parse.quote(GEMINI_API_KEY, safe='')}"
-    req = urllib.request.Request(url, data=json.dumps(prompt).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    # Send the API key in a header rather than the URL so it is less likely to appear in URL logs.
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(GEMINI_MODEL, safe='')}:generateContent"
+    req = urllib.request.Request(url, data=json.dumps(prompt).encode(),
+                                 headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
+                                 method="POST")
     started = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=float(os.getenv("GEMINI_TIMEOUT", "8"))) as response:
@@ -355,9 +358,9 @@ def _gemini_intent(message: str, prior_messages: list[dict[str, str]]) -> dict[s
         "intent": parsed["intent"],
         "accountId": account_id,
         "serviceType": service_type,
-        "postalCode": parsed.get("postalCode") if isinstance(parsed.get("postalCode"), str) else None,
+        "postalCode": parsed.get("postalCode") if isinstance(parsed.get("postalCode"), str) and re.fullmatch(r"\d{5}", parsed.get("postalCode")) else None,
         "issueSummary": str(parsed.get("issueSummary") or message)[:300],
-        "clarificationNeeded": bool(parsed.get("clarificationNeeded", False)),
+        "clarificationNeeded": parsed.get("clarificationNeeded") is True,
     }
     result["_model"] = GEMINI_MODEL
     result["_durationMs"] = (time.monotonic() - started) * 1000
