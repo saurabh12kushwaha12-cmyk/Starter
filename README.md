@@ -84,6 +84,7 @@ The application writes `starter-solution/events.jsonl` and `starter-solution/esc
 - escalation on unresolved integration failures without claiming false success
 - request trace IDs, event-derived metrics, reviewer/live/degraded mode indications
 - hashed session references in telemetry; operational trace/metrics/escalation routes restricted to the synthetic support-agent role
+- local CSP and browser security headers; response bodies do not echo the application session ID or internal action idempotency key
 
 ## Architecture, evaluation evidence, deployment and demo
 
