@@ -301,6 +301,17 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(created["caseId"], repeated["caseId"])
         self.assertEqual(len(mock.CASES), 1)
 
+    def test_logout_revokes_session_and_pending_confirmation(self):
+        pending = app.handle_chat("Create a support case for my internet issue", self.session)
+        self.assertEqual(pending["status"], "confirmation_required")
+        result = app.logout_session(self.session)
+        self.assertEqual(result["status"], "signed_out")
+        self.assertNotIn(self.session, app.SESSIONS)
+        self.assertFalse(any(p.get("sessionId") == self.session for p in app.PENDING_ACTIONS.values()))
+        with self.assertRaises(app.ServiceError) as raised:
+            app.handle_chat("What plan am I using?", self.session)
+        self.assertEqual(raised.exception.status, 401)
+
 
 if __name__ == "__main__":
     unittest.main()
