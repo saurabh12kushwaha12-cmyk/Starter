@@ -386,6 +386,32 @@ class ChallengeTests(unittest.TestCase):
             result = app.handle_chat("Check my home internet legacy subscriber status", self.session)
         self.assertEqual(result["status"], "escalated")
         self.assertNotIn("subscriber status: service active", result["answer"].lower())
+        events = app.get_trace(result["traceId"])["events"]
+        self.assertTrue(any(e["eventType"] == "tool.failed" and e["component"] == "legacy-adapter"
+                            for e in events))
+
+    def test_legacy_adapter_rejects_wrong_content_type_and_traces_failure(self):
+        original_request_raw = app.request_raw
+        def fake_request_raw(method, path, **kwargs):
+            if path == "/api/legacy/subscriber-status":
+                return 200, b"<SubscriberStatusResponse/>", "application/json"
+            return original_request_raw(method, path, **kwargs)
+        with patch.object(app, "request_raw", side_effect=fake_request_raw):
+            result = app.handle_chat("Check my home internet legacy subscriber status", self.session)
+        self.assertEqual(result["status"], "escalated")
+        events = app.get_trace(result["traceId"])["events"]
+        self.assertTrue(any(e["eventType"] == "tool.failed"
+                            and e["component"] == "legacy-adapter"
+                            and e.get("metadata", {}).get("reason") == "invalid_legacy_content_type"
+                            for e in events))
+
+    def test_malformed_device_diagnostics_response_escalates_and_traces_failure(self):
+        with patch.dict(os.environ, {"MOCK_DIAGNOSTICS_MODE": "malformed"}):
+            result = app.handle_chat("My mobile service is slow", self.session)
+        self.assertEqual(result["status"], "escalated")
+        events = app.get_trace(result["traceId"])["events"]
+        self.assertTrue(any(e["eventType"] == "tool.failed" and e["component"] == "device-diagnostics"
+                            for e in events))
 
     def test_expired_server_side_session_is_rejected(self):
         app.SESSIONS[self.session]["expiresAt"] = 0
