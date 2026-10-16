@@ -133,6 +133,8 @@ class ChallengeTests(unittest.TestCase):
         result = app.handle_chat("Create a support case for my internet issue", self.session)
         self.assertEqual(result["status"], "confirmation_required")
         self.assertFalse(mock.CASES)
+        self.assertNotIn("action", result)
+        self.assertNotIn(self.session, json.dumps(result))
         confirmation = app.confirm_action(self.session, result["confirmationId"], True)
         self.assertEqual(confirmation["status"], "resolved")
         self.assertIn("caseId", confirmation["data"])
