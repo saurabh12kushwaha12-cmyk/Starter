@@ -224,6 +224,39 @@ class ChallengeTests(unittest.TestCase):
         self.assertGreater(metrics["toolCallSuccessRate"], 0)
         self.assertGreater(metrics["averageRecordedDurationMs"], 0)
 
+    def test_mock_enterprise_api_rejects_missing_bearer_token(self):
+        with self.assertRaises(app.ServiceError) as raised:
+            app.call_json("GET", "/api/customers/CUST-1001", retry_get=False)
+        self.assertEqual(raised.exception.status, 401)
+
+    def test_mock_api_enforces_customer_ownership_independently(self):
+        with self.assertRaises(app.ServiceError) as raised:
+            app.call_json(
+                "GET",
+                "/api/accounts/ACC-2001",
+                headers={"Authorization": "Bearer synthetic-CUST-1002"},
+                retry_get=False,
+            )
+        self.assertEqual(raised.exception.status, 403)
+
+    def test_escalation_contains_context_systems_and_failed_tool_evidence(self):
+        with patch.dict(os.environ, {"MOCK_BILLING_MODE": "malformed"}):
+            result = app.handle_chat("Show my bill", self.session)
+        self.assertEqual(result["status"], "escalated")
+        record = result["escalation"]
+        for field in ("verifiedContext", "enterpriseSystemsAccessed", "evidence",
+                      "failedTools", "errorSummary", "pendingAction"):
+            self.assertIn(field, record)
+        self.assertIn("billing-service", record["enterpriseSystemsAccessed"])
+
+    def test_billing_rejects_non_numeric_amount(self):
+        with patch.object(app, "call_json", return_value={
+            "accountId": "ACC-2001", "total": "not-a-number", "items": []
+        }):
+            result = app.handle_chat("Show my bill", self.session)
+        self.assertEqual(result["status"], "escalated")
+        self.assertNotIn("$0.00", result["answer"])
+
 
 if __name__ == "__main__":
     unittest.main()
