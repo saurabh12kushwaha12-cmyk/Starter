@@ -72,11 +72,14 @@ def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     """Remove secrets and sanitize metadata before it reaches logs or traces."""
     if not metadata:
         return {}
-    sensitive = {"password", "token", "accessToken", "authorization", "apiKey", "secret", "testPassword", "email"}
-    sensitive_keys = {s.lower() for s in sensitive}
+    sensitive_fragments = (
+        "password", "token", "authorization", "api_key", "apikey", "secret",
+        "credential", "testpassword", "email", "sessionid", "session_id",
+    )
     safe: dict[str, Any] = {}
     for key, value in metadata.items():
-        if key.lower() in sensitive_keys:
+        normalized_key = re.sub(r"[^a-z0-9]", "", key.lower())
+        if any(fragment.replace("_", "") in normalized_key for fragment in sensitive_fragments):
             continue
         if isinstance(value, dict):
             safe[key] = _safe_metadata(value)
@@ -504,10 +507,10 @@ def _escalate(trace_id: str, session_id: str, request_summary: str, reason: str,
         "enterpriseSystemsAccessed": accessed[:20],
         "evidence": evidence[-30:],
         "failedTools": failed[-20:],
-        "errorSummary": reason[:240],
-        "reason": reason[:240],
+        "errorSummary": _safe_summary(reason, 240),
+        "reason": _safe_summary(reason, 240),
         "pendingAction": _safe_metadata(pending_action) if pending_action else None,
-        "recommendedNextStep": next_step[:240],
+        "recommendedNextStep": _safe_summary(next_step, 240),
         "createdAt": utcnow(),
     }
     with WRITE_LOCK:
@@ -807,7 +810,8 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
                                "Inspect the case-management service and verify the idempotency key before any retry.",
                                session["customerId"],
                                pending_action={"type": "create_support_case", "accountId": account_id,
-                                               "summary": action["summary"], "executionOutcome": "unverified"})
+                                               "idempotencyKey": action_key, "summary": action["summary"],
+                                               "executionOutcome": "unverified"})
         with STATE_LOCK:
             PENDING_ACTIONS.pop(action_key, None)
         emit("workflow.escalated", trace_id, "pending", session_id=session_id, metadata={"reason": exc.safe_message})
@@ -823,7 +827,8 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
             "Inspect the case-management trace and verify the idempotency key before retrying.",
             session["customerId"],
             pending_action={"type": "create_support_case", "accountId": account_id,
-                            "summary": action["summary"], "executionOutcome": "unverified"})
+                            "idempotencyKey": action_key, "summary": action["summary"],
+                            "executionOutcome": "unverified"})
         emit("workflow.escalated", trace_id, "pending", session_id=session_id,
              metadata={"reason": "internal_processing_failure"})
         return {"traceId": trace_id, "status": "escalated",
@@ -838,6 +843,13 @@ def get_trace(trace_id: str) -> dict[str, Any]:
         try:
             with EVENTS_FILE.open(encoding="utf-8") as handle:
                 events = [json.loads(line) for line in handle if line.strip() and json.loads(line).get("traceId") == trace_id]
+            # Older local log files may predate session-reference hashing. Redact on read as well.
+            for event in events:
+                raw_session = event.get("sessionId")
+                if isinstance(raw_session, str) and raw_session not in {"system", "anonymous"}:
+                    if not re.fullmatch(r"SESSION-[A-F0-9]{12}", raw_session):
+                        event["sessionId"] = _telemetry_session_ref(raw_session)
+                event["metadata"] = _safe_metadata(event.get("metadata", {}))
         except (OSError, json.JSONDecodeError):
             events = []
     return {"traceId": trace_id, "events": events, "eventCount": len(events)}
