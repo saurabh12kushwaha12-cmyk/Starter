@@ -155,6 +155,9 @@ def call_json(method: str, path: str, *, payload: dict[str, Any] | None = None,
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ServiceError(path, "malformed_response") from exc
     assert last_error is not None
+    if trace_id:
+        emit("tool.failed", trace_id, "failure", session_id=session_id, component=component,
+             metadata={"reason": last_error.safe_message, "path": path, "httpStatus": last_error.status})
     raise last_error
 
 
@@ -410,7 +413,8 @@ def _escalate(trace_id: str, session_id: str, request_summary: str, reason: str,
     evidence = []
     for event in events:
         event_type = event.get("eventType")
-        component = event.get("component")
+        event_metadata = event.get("metadata", {})
+        component = event_metadata.get("service") if event_type == "workflow.failed" else event.get("component")
         if event_type in {"tool.invoked", "tool.completed", "tool.failed", "action.failed"} and component:
             if component not in accessed:
                 accessed.append(component)
@@ -419,7 +423,7 @@ def _escalate(trace_id: str, session_id: str, request_summary: str, reason: str,
         ):
             failed.append({"component": component or "unknown", "eventType": event_type,
                            "status": event.get("status", "failure"),
-                           "metadata": event.get("metadata", {})})
+                           "metadata": event_metadata})
         if event_type in {"tool.completed", "tool.failed", "authorization.denied",
                           "confirmation.received", "action.failed", "gemini.failure"}:
             evidence.append({"eventId": event.get("eventId"), "eventType": event_type,
