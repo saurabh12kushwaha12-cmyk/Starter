@@ -901,7 +901,7 @@ HTML = r"""<!doctype html>
 <div class="divider"></div><div id="chatlog" class="chatlog"><div class="bubble bot">Welcome. Sign in, then ask about your plan, bill, connectivity, subscriber status, or a support case.</div></div>
 <div class="composer"><textarea id="message" rows="2" maxlength="2000" placeholder="Describe the issue…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea><button onclick="sendMessage()">Send</button></div>
 <div class="muted-small" style="margin-top:8px">Action requests are not submitted until explicit confirmation. All customer/account data is synthetic.</div></section>
-<aside class="panel"><h2>Operations & evidence</h2><div class="row"><span class="status" id="healthStatus">Checking health…</span><span class="status" id="geminiStatus">AI mode</span></div><div class="divider"></div><div class="stats">
+<aside class="panel"><h2>Operations & evidence</h2><div class="row"><span class="status" id="healthStatus">Checking health…</span><span class="status" id="geminiStatus">AI mode</span></div><div class="divider"></div><p class="muted-small" id="opsAccess">Sign in as the synthetic support agent to view cross-customer metrics and traces.</p><div class="stats">
 <div class="stat"><div class="muted-small">Requests</div><div class="num" id="mRequests">0</div></div>
 <div class="stat"><div class="muted-small">Sessions</div><div class="num" id="mSessions">0</div></div>
 <div class="stat"><div class="muted-small">Resolved</div><div class="num" id="mResolved">0</div></div>
@@ -924,8 +924,8 @@ async function signIn(){const b=$('loginBtn');b.disabled=true;try{const r=await 
 async function signOut(){const previous=sessionId;sessionId=null;pendingConfirmation=null;$('authStatus').textContent='Signed out';addBubble('Signed out. Protected actions require sign-in.','bot');if(previous){try{await fetch('/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:previous})})}catch(e){addBubble('Local sign-out completed; server session revocation could not be confirmed.','bot')}}}
 async function sendMessage(){const message=$('message').value.trim();if(!message)return; $('message').value='';addBubble(message,'user');try{const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,sessionId})});const d=await r.json();renderResult(d)}catch(e){addBubble('Request failed. Check whether both local servers are running.','bot')}}
 async function confirmAction(confirmed){if(!sessionId||!pendingConfirmation)return;try{const r=await fetch('/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId,confirmationId:pendingConfirmation,confirmed})});const d=await r.json();pendingConfirmation=null;renderResult(d)}catch(e){addBubble('Could not confirm the action.','bot')}}
-async function refreshMetrics(){try{const [h,m]=await Promise.all([fetch('/health').then(r=>r.json()),fetch('/metrics').then(r=>r.json())]);$('healthStatus').textContent=`App ${h.status} · Mock API ${h.mockApi}`;$('geminiStatus').textContent=h.aiMode;$('mRequests').textContent=m.totalRequests||0;$('mSessions').textContent=m.totalSessions||0;$('mResolved').textContent=m.resolvedRequests||0;$('mResolutionRate').textContent=(m.resolutionRate||0)+'%';$('mEscalated').textContent=m.escalatedRequests||0;$('mFailures').textContent=m.failedRequests||0;$('mToolSuccess').textContent=(m.toolCallSuccessRate||0)+'%';$('mGeminiLatency').textContent=(m.averageGeminiLatencyMs||0)+' ms';$('mPending').textContent=m.pendingConfirmations||0;$('mClarifications').textContent=m.clarificationRequests||0;$('mRetries').textContent=m.retryEvents||0;$('mEvents').textContent=m.eventCount||0;}catch(e){$('healthStatus').textContent='Health check failed'}}
-async function showLastTrace(){if(!lastTrace){$('evidence').textContent='No trace yet. Send a request first.';return}try{$('evidence').textContent=JSON.stringify(await fetch('/traces/'+encodeURIComponent(lastTrace)).then(r=>r.json()),null,2)}catch(e){$('evidence').textContent='Could not load trace.'}}
+async function refreshMetrics(){try{const h=await fetch('/health').then(r=>r.json());$('healthStatus').textContent=`App ${h.status} · Mock API ${h.mockApi}`;$('geminiStatus').textContent=h.aiMode;if(!sessionId){$('opsAccess').textContent='Sign in as support.agent to view cross-customer metrics, traces and escalation records.';return}const mr=await fetch('/metrics',{headers:{'X-Session-ID':sessionId}});if(!mr.ok){$('opsAccess').textContent='Operational telemetry is restricted to the support-agent role. Use support.agent for the operations view.';return}const m=await mr.json();$('opsAccess').textContent='Authorized operations view: live metrics from application events.';$('mRequests').textContent=m.totalRequests||0;$('mSessions').textContent=m.totalSessions||0;$('mResolved').textContent=m.resolvedRequests||0;$('mResolutionRate').textContent=(m.resolutionRate||0)+'%';$('mEscalated').textContent=m.escalatedRequests||0;$('mFailures').textContent=m.failedRequests||0;$('mToolSuccess').textContent=(m.toolCallSuccessRate||0)+'%';$('mGeminiLatency').textContent=(m.averageGeminiLatencyMs||0)+' ms';$('mPending').textContent=m.pendingConfirmations||0;$('mClarifications').textContent=m.clarificationRequests||0;$('mRetries').textContent=m.retryEvents||0;$('mEvents').textContent=m.eventCount||0;}catch(e){$('healthStatus').textContent='Health check failed'}}
+async function showLastTrace(){if(!lastTrace){$('evidence').textContent='No trace yet. Send a request first.';return}if(!sessionId){$('evidence').textContent='Sign in as support.agent to view request traces.';return}try{const r=await fetch('/traces/'+encodeURIComponent(lastTrace),{headers:{'X-Session-ID':sessionId}});const d=await r.json();$('evidence').textContent=JSON.stringify(d,null,2)}catch(e){$('evidence').textContent='Could not load trace.'}}
 refreshMetrics();
 </script></body></html>"""
 
@@ -972,14 +972,26 @@ class Handler(BaseHTTPRequestHandler):
                 mock_status = "unavailable"
             return self._send(200, {"status": "ok", "mockApi": mock_status, "aiMode": AI_MODE if AI_MODE in {"live", "reviewer"} else "reviewer", "geminiConfigured": bool(GEMINI_API_KEY)})
         if path == "/metrics":
+            try:
+                require_operations_session(self.headers.get("X-Session-ID"))
+            except ServiceError as exc:
+                return self._send(exc.status or 403, {"error": exc.safe_message})
             return self._send(200, get_metrics())
         if path.startswith("/traces/"):
+            try:
+                require_operations_session(self.headers.get("X-Session-ID"))
+            except ServiceError as exc:
+                return self._send(exc.status or 403, {"error": exc.safe_message})
             trace_id = path.rsplit("/", 1)[-1]
             if not re.fullmatch(r"TRACE-[A-F0-9]{8,24}", trace_id):
                 return self._send(400, {"error": "invalid_trace_id"})
             trace = get_trace(trace_id)
             return self._send(200 if trace["eventCount"] else 404, trace)
         if path == "/escalations":
+            try:
+                require_operations_session(self.headers.get("X-Session-ID"))
+            except ServiceError as exc:
+                return self._send(exc.status or 403, {"error": exc.safe_message})
             records = []
             try:
                 with ESCALATIONS_FILE.open(encoding="utf-8") as handle:
