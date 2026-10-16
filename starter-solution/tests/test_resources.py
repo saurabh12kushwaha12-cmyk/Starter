@@ -443,11 +443,23 @@ class ChallengeTests(unittest.TestCase):
 
     def test_billing_rejects_non_numeric_amount(self):
         with patch.object(app, "call_json", return_value={
-            "accountId": "ACC-2001", "total": "not-a-number", "items": []
+            "accountId": "ACC-2001", "period": "2026-09",
+            "total": "not-a-number", "items": []
         }):
             result = app.handle_chat("Show my bill", self.session)
         self.assertEqual(result["status"], "escalated")
         self.assertNotIn("$0.00", result["answer"])
+
+    def test_billing_rejects_malformed_line_item_and_records_tool_failure(self):
+        with patch.object(app, "call_json", return_value={
+            "accountId": "ACC-2001", "period": "2026-09", "total": 84.99,
+            "items": [{"description": "Fiber 500", "amount": "not-a-number"}]
+        }):
+            result = app.handle_chat("Show my bill", self.session)
+        self.assertEqual(result["status"], "escalated")
+        events = app.get_trace(result["traceId"])["events"]
+        self.assertTrue(any(e["eventType"] == "tool.failed" and e["component"] == "billing-service"
+                            for e in events))
 
     def test_device_diagnostics_unavailable_escalates_for_normal_network_status(self):
         jordan = self.login("jordan.lee", "ReviewerPass-1002")
