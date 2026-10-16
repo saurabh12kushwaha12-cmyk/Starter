@@ -29,6 +29,8 @@ Reviewer demo account:
 
 Second synthetic customer (use to verify record isolation): `jordan.lee` / `ReviewerPass-1002`.
 
+Synthetic operations user (required for cross-customer metrics, traces and escalation records): `support.agent` / `ReviewerPass-3001`. The operations endpoints reject customer-role and unauthenticated access.
+
 ## Run automated evaluation
 
 From the repository root:
@@ -87,6 +89,8 @@ The application writes `starter-solution/events.jsonl` and `starter-solution/esc
 - [Requirement-to-evidence matrix](docs/requirement-to-evidence.md)
 - [Three-to-five-minute demo script](docs/demo-script.md)
 - [Known limitations](docs/known-gaps.md)
+- [Developer handover and extension guide](docs/developer-handover.md)
+- [Summary of changes](docs/changes-summary.md)
 - Challenge reference: [TOPCODER_CHALLENGE_SPEC.md](TOPCODER_CHALLENGE_SPEC.md)
 
 The Google Cloud items are a deployment mapping/plan, not a claim that a live GCP deployment has already been provisioned. Verify the test output and live Gemini configuration in your own environment before submitting.
