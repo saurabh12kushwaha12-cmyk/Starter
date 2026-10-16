@@ -10,7 +10,8 @@ flowchart TD
     O --> Z[Deterministic authorization and validation]
     Z --> T[Enterprise tool/adapters]
     T --> A[Mock auth/profile/account/billing/case APIs]
-    T --> N[Network diagnostics API]
+    T --> N[Service-scoped network outage API]
+    T --> D[Device diagnostics API]
     T --> L[Legacy XML adapter]
     O --> E[Confirmation and idempotency controls]
     E --> A
