@@ -406,8 +406,9 @@ class ChallengeTests(unittest.TestCase):
                             for e in events))
 
     def test_malformed_device_diagnostics_response_escalates_and_traces_failure(self):
+        jordan = self.login("jordan.lee", "ReviewerPass-1002")
         with patch.dict(os.environ, {"MOCK_DIAGNOSTICS_MODE": "malformed"}):
-            result = app.handle_chat("My mobile service is slow", self.session)
+            result = app.handle_chat("My mobile service is slow", jordan["sessionId"])
         self.assertEqual(result["status"], "escalated")
         events = app.get_trace(result["traceId"])["events"]
         self.assertTrue(any(e["eventType"] == "tool.failed" and e["component"] == "device-diagnostics"
