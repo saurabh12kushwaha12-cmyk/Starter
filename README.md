@@ -1,5 +1,42 @@
 # Gemini CX & Telco — Productionized Challenge Submission
 
+## Vercel mobile web application
+
+The repository now includes a Next.js web interface in `app/` alongside the original Python challenge implementation. The original solution is preserved on the `archive/main-before-vercel` branch; ongoing web-app work is on `main`.
+
+### Deploy and configure
+
+The Vercel project is linked to this GitHub repository and deploys from `main`. Configure these server-only environment variables in Vercel Project Settings:
+
+- `DATABASE_URL`: connected to the dedicated `starter-app-isolated` Neon branch. Do not expose this variable to browser code.
+- `AI_MODE=live`
+- `GEMINI_MODEL=gemini-3.8-flash`
+- `GEMINI_API_KEY`: add the private key in Vercel's encrypted environment-variable settings. Do not put it in GitHub, this file, screenshots, or chat messages.
+
+After changing environment variables, trigger a redeployment so the new deployment receives them. Gemini is optional for reviewer-mode behavior; the app falls back to deterministic classification when the key is missing or the provider fails.
+
+### Web app capabilities
+
+- Responsive mobile-first login and customer support workspace.
+- Synthetic demo accounts: `alex.morgan / ReviewerPass-1001`, `jordan.lee / ReviewerPass-1002`, and `support.agent / ReviewerPass-3001`.
+- Server-side session token hashing, an HTTP-only cookie, role checks, customer data isolation, request tracing, and a Neon-backed audit trail.
+- Bill, usage, plan, network troubleshooting and support-case workflows. Case creation requires an explicit confirmation and is protected by a database idempotency key.
+- The support-agent role alone can view aggregated operations counts and sanitized events.
+
+All accounts and service details are synthetic. This is a challenge test application, not a live telecom subscriber system.
+
+### Web API smoke checks
+
+- `GET /api/health` — runtime, Neon connectivity, AI mode and key-presence status (never returns secrets).
+- `POST /api/auth/login` — establishes an HTTP-only session.
+- `GET /api/auth/me` — validates the current session.
+- `POST /api/chat` — intent routing and guarded customer workflow.
+- `POST /api/confirm` — confirm or cancel the pending support-case action.
+- `GET /api/ops` — role-restricted aggregated operations data.
+
+The original Python test suite remains available with `python3 -m unittest discover -s starter-solution/tests -v`. The Vercel version is a new web runtime and should also be exercised through the deployed mobile UI after its Neon and Gemini environment configuration is complete.
+
+
 A runnable Python proof-of-capability for the Topcoder **Enterprise AI Customer Experience Resolution System: Gemini CX & Telco** challenge. It retains the supplied synthetic data, mock enterprise APIs, eight review scenarios, and original standard-library architecture while completing the main workflow, authorization, integration, failure, and telemetry gaps.
 
 > **Safety:** All supplied users and account records are synthetic. Do not connect this challenge application to real subscriber records. Active credentials must never be committed to Git.
