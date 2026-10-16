@@ -175,9 +175,12 @@ class H(BaseHTTPRequestHandler):
                     )
                     if not owns_service_type:
                         return self.js(403, {"error": "access_denied"})
-            outage = find(OUTAGES, "postalCode", postal_code)
-            if outage and service_type and outage.get("serviceType") != service_type:
-                return self.js(200, {"postalCode": postal_code, "serviceType": service_type, "status": "unknown"})
+            outage = next(
+                (item for item in OUTAGES
+                 if item.get("postalCode") == postal_code
+                 and (not service_type or item.get("serviceType") == service_type)),
+                None,
+            )
             if outage:
                 return self.js(200, outage)
             response = {"postalCode": postal_code, "status": "unknown"}
