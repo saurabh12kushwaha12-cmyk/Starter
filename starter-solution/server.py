@@ -270,6 +270,8 @@ def authorized_account(session: dict[str, Any], requested_account: str | None, t
         emit("authorization.denied", trace_id, "denied", session_id=session["sessionId"],
              metadata={"requestedAccount": requested_account, "reason": "record_ownership_mismatch"})
         raise ServiceError("authorization", "access_denied", 403)
+    emit("authorization.allowed", trace_id, session_id=session["sessionId"], component="authorization",
+         metadata={"scope": "account", "role": "support-agent" if _is_support(session) else "customer"})
     return str(requested_account)
 
 
@@ -409,6 +411,14 @@ def _gemini_intent(message: str, prior_messages: list[dict[str, str]]) -> dict[s
     return result
 
 
+def _negates_support_case(message: str) -> bool:
+    """Detect clear negative intent so either classifier cannot create a case against the user's wording."""
+    return bool(
+        re.search(r"\b(?:do not|don't|dont|never|no need to|avoid|cancel|stop)\b.{0,50}\b(?:create|open|raise|submit|file|want|need)\b.{0,35}\b(?:support\s+case|case|ticket)\b", message, re.I)
+        or re.search(r"\b(?:no|not)\s+(?:support\s+)?(?:case|ticket)\b", message, re.I)
+    )
+
+
 def _deterministic_intent(message: str) -> dict[str, Any]:
     """Deterministic reviewer/degraded classifier; actions still go through real tools and controls."""
     text = message.lower()
@@ -546,8 +556,18 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
             conv["lastTraceId"] = trace_id
             conv["messages"] = conv["messages"][-12:]
     result = _respond("", trace_id, session, status="resolved", extra={"intent": intent["intent"], "aiMode": actual_mode})
+    action_rejected = intent["intent"] == "create_case" and _negates_support_case(original_message)
 
-    if intent["intent"] == "other":
+    if action_rejected:
+        if session:
+            with STATE_LOCK:
+                for key, pending_action in list(PENDING_ACTIONS.items()):
+                    if pending_action.get("sessionId") == session_id and pending_action.get("state", "pending") == "pending":
+                        PENDING_ACTIONS.pop(key, None)
+                        emit("action.cancelled", trace_id, session_id=session_id, component="case-management",
+                             metadata={"reason": "customer_declined_case"})
+        result.update(answer="Understood. I will not create a support case.", status="resolved", intent="action_declined")
+    elif intent["intent"] == "other":
         if session:
             session["pendingClarification"] = original_message
         result.update(answer="I can help with your plan, bill, internet/mobile service issue, subscriber status, or support case. Which of these would you like to work on?", status="clarification")
@@ -1006,16 +1026,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._json_body()
             if path == "/auth/login":
+                trace = _new_trace()
+                emit("authentication.attempted", trace, metadata={"credentialType": "username_password"})
                 try:
                     user = login(body.get("username"), body.get("password"))
-                    trace = _new_trace()
                     emit("session.started", trace, session_id=user["sessionId"],
                          metadata={"customerId": user["customerId"], "roles": user["roles"]})
                     emit("authentication.succeeded", trace, session_id=user["sessionId"],
                          metadata={"customerId": user["customerId"], "roles": user["roles"]})
                     return self._send(200, user)
                 except ServiceError as exc:
-                    trace = _new_trace()
                     emit("authentication.failed", trace, "denied", metadata={"reason": exc.safe_message})
                     status = exc.status or 401
                     return self._send(status, {"error": exc.safe_message})
@@ -1052,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    server = ThreadingHTTPServer((os.getenv("APP_HOST", "0.0.0.0"), APP_PORT), Handler)
+    server = ThreadingHTTPServer((os.getenv("APP_HOST", "127.0.0.1"), APP_PORT), Handler)
     server.daemon_threads = True
     print(f"Gemini CX Resolution Console: http://127.0.0.1:{APP_PORT} (AI_MODE={AI_MODE})", flush=True)
     try:
