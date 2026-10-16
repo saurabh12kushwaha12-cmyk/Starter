@@ -147,6 +147,16 @@ class ChallengeTests(unittest.TestCase):
         events = app.get_trace(result["traceId"])["events"]
         self.assertTrue(any(e["eventType"] == "authorization.allowed" for e in events))
 
+    def test_service_problem_takes_precedence_over_plan_keywords(self):
+        problem = app._deterministic_intent("My internet plan is not working")
+        self.assertEqual(problem["intent"], "service_issue")
+        self.assertEqual(problem["serviceType"], "home-internet")
+        inquiry = app._deterministic_intent("What internet plan am I currently using?")
+        self.assertEqual(inquiry["intent"], "account_plan")
+        mobile = app._deterministic_intent("My mobile service has no service")
+        self.assertEqual(mobile["intent"], "service_issue")
+        self.assertEqual(mobile["serviceType"], "mobile")
+
     def test_cross_customer_account_request_is_denied_before_fetch(self):
         result = app.handle_chat("What plan am I using on ACC-2002?", self.session)
         self.assertEqual(result["status"], "access_denied")
