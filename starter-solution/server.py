@@ -279,6 +279,15 @@ def logout_session(session_id: str) -> dict[str, Any]:
     return {"status": "signed_out", "traceId": trace_id}
 
 
+def _prune_expired_pending_actions() -> None:
+    """Discard expired, non-executing confirmations to avoid stale UI state and memory growth."""
+    now = time.time()
+    with STATE_LOCK:
+        for key, item in list(PENDING_ACTIONS.items()):
+            if item.get("state", "pending") != "executing" and item.get("expiresAt", 0) <= now:
+                PENDING_ACTIONS.pop(key, None)
+
+
 def _is_support(session: dict[str, Any]) -> bool:
     return "support-agent" in session.get("roles", [])
 
@@ -576,6 +585,7 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
     message = message.strip()
     workflow_started = time.monotonic()
     trace_id = _new_trace()
+    _prune_expired_pending_actions()
     emit("request.received", trace_id, metadata={"messageLength": len(message)})
     session: dict[str, Any] | None = None
     if session_id:
@@ -933,6 +943,7 @@ def get_escalations(limit: int = 100) -> dict[str, Any]:
 
 
 def get_metrics() -> dict[str, Any]:
+    _prune_expired_pending_actions()
     rows: list[dict[str, Any]] = []
     if EVENTS_FILE.exists():
         try:
