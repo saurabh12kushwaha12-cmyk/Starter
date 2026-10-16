@@ -130,6 +130,13 @@ def _validate_telemetry_event(event: dict[str, Any]) -> None:
 def emit(event_type: str, trace_id: str, status: str = "success", *, session_id: str = "system",
          component: str = "starter-app", duration_ms: float | None = None,
          metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    if status not in {"success", "failure", "pending", "denied"}:
+        raise ValueError("invalid_telemetry_status")
+    if duration_ms is not None and (
+        not isinstance(duration_ms, (int, float)) or isinstance(duration_ms, bool)
+        or not math.isfinite(float(duration_ms)) or duration_ms < 0
+    ):
+        raise ValueError("invalid_telemetry_duration")
     event: dict[str, Any] = {
         "eventId": "EVT-" + uuid.uuid4().hex[:12],
         "traceId": trace_id,
@@ -137,10 +144,10 @@ def emit(event_type: str, trace_id: str, status: str = "success", *, session_id:
         "timestamp": utcnow(),
         "eventType": event_type,
         "component": component,
-        "status": status if status in {"success", "failure", "pending", "denied"} else "failure",
+        "status": status,
     }
     if duration_ms is not None:
-        event["durationMs"] = max(0, round(float(duration_ms), 2))
+        event["durationMs"] = round(float(duration_ms), 2)
     clean_metadata = _safe_metadata(metadata)
     if clean_metadata:
         event["metadata"] = clean_metadata
