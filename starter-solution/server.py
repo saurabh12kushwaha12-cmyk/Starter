@@ -551,7 +551,14 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                         raise ServiceError("account-service", "service_id_unavailable")
                     legacy = _legacy_status(account_id, service_id, session, trace_id)
                     if legacy.get("error"):
-                        result.update(answer=f"The legacy subscriber service returned {legacy['error']}. I have not treated this as a successful status check.", status="degraded", sources=["legacy-service"], data=legacy)
+                        escalation = _escalate(
+                            trace_id, session["sessionId"], original_message, str(legacy["error"]),
+                            ["customer authenticated", "account ownership verified", "legacy response normalized"],
+                            "Support should inspect the legacy response/error code and verify subscriber status before giving a definitive answer.",
+                            session["customerId"])
+                        result.update(
+                            answer=f"The legacy subscriber service returned {legacy['error']}. I could not verify the status, so I escalated the request.",
+                            status="escalated", sources=["account-service", "legacy-service"], data=legacy, escalation=escalation)
                     else:
                         result.update(answer=f"Legacy subscriber status: service {legacy['serviceStatus']}; network status {legacy['networkStatus']}.", status="resolved", sources=["legacy-service"], data=legacy)
                 elif intent["intent"] == "service_issue":
@@ -630,6 +637,16 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                     result.update(answer="I could not safely complete this request because a required service did not return a verifiable result. I recorded an escalation for support.", status="escalated", escalation=escalation, httpStatus=status_code)
                 else:
                     result.update(answer="I cannot access that record or action with this session.", status="access_denied" if status_code == 403 else "authentication_required", httpStatus=status_code)
+            except Exception:
+                emit("workflow.failed", trace_id, "failure", session_id=session["sessionId"],
+                     metadata={"service": "application", "reason": "internal_processing_failure"})
+                escalation = _escalate(
+                    trace_id, session["sessionId"], original_message, "internal_processing_failure",
+                    ["request received", "intent classified"],
+                    "Support should inspect the sanitized trace and retry only after the root cause is understood.",
+                    session["customerId"])
+                result.update(answer="An internal processing issue prevented safe completion. The request was escalated for review.",
+                              status="escalated", escalation=escalation)
     result["aiMode"] = actual_mode
     emit("workflow.resolved" if result.get("status") in {"resolved", "clarification", "confirmation_required"} else "workflow.escalated" if result.get("status") == "escalated" else "workflow.failed",
          trace_id, "success" if result.get("status") in {"resolved", "clarification", "confirmation_required"} else "pending" if result.get("status") == "escalated" else "failure",
@@ -706,6 +723,23 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
             PENDING_ACTIONS.pop(action_key, None)
         emit("workflow.escalated", trace_id, "pending", session_id=session_id, metadata={"reason": exc.safe_message})
         return {"traceId": trace_id, "status": "escalated", "answer": "The case-management service did not confirm creation, so I have not reported success. The request was escalated.", "escalation": escalation, "aiMode": "reviewer"}
+    except Exception:
+        emit("action.failed", trace_id, "failure", session_id=session_id, component="case-management",
+             metadata={"reason": "internal_processing_failure"})
+        with STATE_LOCK:
+            PENDING_ACTIONS.pop(action_key, None)
+        escalation = _escalate(
+            trace_id, session_id, action["summary"], "internal_processing_failure",
+            ["customer authenticated", "authorization verified", "customer confirmation received"],
+            "Inspect the case-management trace and verify the idempotency key before retrying.",
+            session["customerId"],
+            pending_action={"type": "create_support_case", "accountId": account_id,
+                            "summary": action["summary"], "executionOutcome": "unverified"})
+        emit("workflow.escalated", trace_id, "pending", session_id=session_id,
+             metadata={"reason": "internal_processing_failure"})
+        return {"traceId": trace_id, "status": "escalated",
+                "answer": "An internal processing issue prevented verification of the support case. The request was escalated and must be checked before retrying.",
+                "escalation": escalation, "aiMode": "reviewer"}
 
 
 def get_trace(trace_id: str) -> dict[str, Any]:
