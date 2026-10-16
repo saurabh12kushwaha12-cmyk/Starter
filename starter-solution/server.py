@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -130,12 +131,18 @@ def request_raw(method: str, path: str, *, payload: dict[str, Any] | None = None
 
 
 def call_json(method: str, path: str, *, payload: dict[str, Any] | None = None,
-              retry_get: bool = True) -> dict[str, Any]:
+              headers: dict[str, str] | None = None, retry_get: bool = True,
+              trace_id: str | None = None, session_id: str = "system",
+              component: str = "enterprise-integration") -> dict[str, Any]:
+    """Call a mock enterprise endpoint with bounded retries for read-only requests only."""
     attempts = 2 if method == "GET" and retry_get else 1
     last_error: ServiceError | None = None
     for attempt in range(attempts):
+        if attempt > 0 and trace_id:
+            emit("tool.retry", trace_id, "pending", session_id=session_id, component=component,
+                 metadata={"path": path, "attempt": attempt + 1})
         try:
-            status, raw, _ = request_raw(method, path, payload=payload)
+            status, raw, _ = request_raw(method, path, payload=payload, headers=headers)
             data = json.loads(raw.decode("utf-8")) if raw else {}
             if not isinstance(data, dict):
                 raise ServiceError(path, "malformed_response", status)
@@ -203,6 +210,13 @@ def _is_support(session: dict[str, Any]) -> bool:
     return "support-agent" in session.get("roles", [])
 
 
+def _session_headers(session: dict[str, Any]) -> dict[str, str]:
+    token = session.get("accessToken")
+    if not isinstance(token, str) or not token:
+        raise ServiceError("authentication", "invalid_or_expired_authentication", 401)
+    return {"Authorization": "Bearer " + token}
+
+
 def authorized_account(session: dict[str, Any], requested_account: str | None, trace_id: str) -> str:
     requested_account = requested_account or session.get("accountId")
     if not requested_account:
@@ -216,9 +230,12 @@ def authorized_account(session: dict[str, Any], requested_account: str | None, t
 
 def _profile(session: dict[str, Any], trace_id: str) -> dict[str, Any]:
     emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"], component="customer-profile")
-    data = call_json("GET", "/api/customers/" + urllib.parse.quote(session["customerId"], safe=""))
+    data = call_json("GET", "/api/customers/" + urllib.parse.quote(session["customerId"], safe=""),
+                     headers=_session_headers(session), trace_id=trace_id, session_id=session["sessionId"], component="customer-profile")
     # Keep only the fields required by business logic; synthetic auth attributes are never propagated.
     safe = {"customerId": data.get("customerId"), "name": data.get("name"), "postalCode": data.get("postalCode"), "accountId": data.get("accountId")}
+    if safe["customerId"] != session.get("customerId"):
+        raise ServiceError("customer-profile", "profile_identity_mismatch", 403)
     if not safe["customerId"]:
         raise ServiceError("customer-profile", "malformed_profile")
     session["postalCode"] = safe.get("postalCode")
@@ -229,7 +246,8 @@ def _profile(session: dict[str, Any], trace_id: str) -> dict[str, Any]:
 
 def _account(session: dict[str, Any], account_id: str, trace_id: str) -> dict[str, Any]:
     emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"], component="account-service", metadata={"accountId": account_id})
-    data = call_json("GET", "/api/accounts/" + urllib.parse.quote(account_id, safe=""))
+    data = call_json("GET", "/api/accounts/" + urllib.parse.quote(account_id, safe=""),
+                     headers=_session_headers(session), trace_id=trace_id, session_id=session["sessionId"], component="account-service")
     if not _is_support(session) and data.get("customerId") != session.get("customerId"):
         emit("authorization.denied", trace_id, "denied", session_id=session["sessionId"], metadata={"reason": "account_owner_mismatch"})
         raise ServiceError("authorization", "access_denied", 403)
@@ -241,8 +259,12 @@ def _account(session: dict[str, Any], account_id: str, trace_id: str) -> dict[st
 
 def _billing(account_id: str, session: dict[str, Any], trace_id: str) -> dict[str, Any]:
     emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"], component="billing-service", metadata={"accountId": account_id})
-    data = call_json("GET", f"/api/accounts/{urllib.parse.quote(account_id, safe='')}/billing")
-    if data.get("accountId") != account_id or "total" not in data or not isinstance(data.get("items"), list):
+    data = call_json("GET", f"/api/accounts/{urllib.parse.quote(account_id, safe='')}/billing",
+                     headers=_session_headers(session), trace_id=trace_id, session_id=session["sessionId"], component="billing-service")
+    total = data.get("total")
+    if (data.get("accountId") != account_id or not isinstance(total, (int, float))
+            or isinstance(total, bool) or not math.isfinite(float(total)) or total < 0
+            or not isinstance(data.get("items"), list)):
         raise ServiceError("billing-service", "malformed_response")
     emit("tool.completed", trace_id, session_id=session["sessionId"], component="billing-service", metadata={"accountId": account_id})
     return data
@@ -251,7 +273,8 @@ def _billing(account_id: str, session: dict[str, Any], trace_id: str) -> dict[st
 def _network(postal_code: str, session: dict[str, Any], trace_id: str) -> dict[str, Any]:
     emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"], component="network-diagnostics")
     query = urllib.parse.urlencode({"postalCode": postal_code})
-    data = call_json("GET", "/api/network/outages?" + query)
+    data = call_json("GET", "/api/network/outages?" + query,
+                     headers=_session_headers(session), trace_id=trace_id, session_id=session["sessionId"], component="network-diagnostics")
     if data.get("postalCode") != postal_code or "status" not in data:
         raise ServiceError("network-diagnostics", "malformed_response")
     emit("tool.completed", trace_id, session_id=session["sessionId"], component="network-diagnostics", metadata={"status": data.get("status")})
@@ -264,7 +287,8 @@ def _legacy_status(account_id: str, service_id: str, session: dict[str, Any], tr
     ET.SubElement(root, "AccountNumber").text = account_id
     ET.SubElement(root, "ServiceNumber").text = service_id
     xml_body = ET.tostring(root, encoding="unicode")
-    status, raw, content_type = request_raw("POST", "/api/legacy/subscriber-status", payload={"_xml": xml_body}, content_type="application/xml")
+    status, raw, content_type = request_raw("POST", "/api/legacy/subscriber-status", payload={"_xml": xml_body},
+                                            headers=_session_headers(session), content_type="application/xml")
     try:
         data = ET.fromstring(raw)
     except ET.ParseError as exc:
@@ -564,7 +588,8 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
         payload = {"customerId": session["customerId"], "accountId": account_id,
                    "summary": action["summary"], "idempotencyKey": action_key}
         emit("tool.invoked", trace_id, "pending", session_id=session_id, component="case-management", metadata={"accountId": account_id})
-        created = call_json("POST", "/api/support-cases", payload=payload, retry_get=False)
+        created = call_json("POST", "/api/support-cases", payload=payload, headers=_session_headers(session), retry_get=False,
+                            trace_id=trace_id, session_id=session_id, component="case-management")
         case_id = created.get("caseId")
         if not case_id or created.get("status") != "open":
             raise ServiceError("case-management", "unverified_action_result")
