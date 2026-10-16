@@ -4,14 +4,14 @@
 
 This project is a local proof-of-capability for the Topcoder Gemini CX & Telco challenge. It demonstrates how a synthetic telecom customer request can be interpreted, authenticated, authorized, routed through enterprise adapters, answered from verified data, confirmed before a consequential action, and traced through success or escalation. It is not a production telecom service and must never be connected to real subscriber records.
 
-Supported demonstrations are plan inquiry, bill lookup, connectivity issue checks, legacy subscriber status, and support-case creation. A case is not sent until explicit confirmation. Other service/account changes are not implemented.
+Supported demonstrations are plan inquiry, bill lookup, service-scoped network status, device diagnostics, legacy subscriber status, and support-case creation. A case is not sent until explicit confirmation. Other service/account changes are not implemented.
 
 ## Component responsibilities
 
 | Component | Responsibility |
 |---|---|
 | `starter-solution/server.py` | HTTP interface, server-side sessions, Gemini/reviewer classifier, request orchestration, policy/ownership checks, adapter validation, confirmation, escalation, telemetry and metrics |
-| `mock-services/server.py` | Synthetic enterprise API; bearer token validation; customer/account ownership; idempotent support-case endpoint; failure switches |
+| `mock-services/server.py` | Synthetic enterprise API; bearer token validation; customer/account/service-type ownership; service-scoped outage lookup; device diagnostics; idempotent support-case endpoint; failure switches |
 | `sample-data/` | Synthetic identity, account, bill and outage records |
 | `scenarios/` | Eight challenge scenario definitions |
 | `schemas/` | Event, escalation and other payload schemas |
@@ -55,7 +55,7 @@ The test fixture starts an isolated local instance of the mock API and writes ev
 
 ## How to change orchestration safely
 
-The supported deterministic routing is centralized in `_deterministic_intent`, with Gemini structured classification in `_gemini_intent` and provider fallback in `classify`. The customer workflow is dispatched in `handle_chat`; controlled case execution is isolated in `confirm_action`. Keep policy checks outside the model. For new intents, define accepted structured fields, ask for any missing information, preserve context, route only to a narrowly scoped adapter, and define explicit terminal outcomes. Add a bounded clarification/confirmation lifecycle so requests cannot loop forever.
+The supported deterministic routing is centralized in `_deterministic_intent`, with Gemini structured classification in `_gemini_intent` and provider fallback in `classify`. The customer workflow is dispatched in `handle_chat`; service-issue workflows validate the profile/account, query the postal-code plus owned service type, run a device diagnostic, and normalize the legacy XML status. Controlled case execution is isolated in `confirm_action`. Keep policy checks outside the model. For new intents, define accepted structured fields, ask for any missing information, preserve context, route only to a narrowly scoped adapter, and define explicit terminal outcomes. Add a bounded clarification/confirmation lifecycle so requests cannot loop forever.
 
 Do not add speculative agent calls just to increase the agent count. If a specialized agent is added, document its responsibility, allowed context/tools, input/output schema, timeouts, stop conditions and tests. No model component should receive stored access tokens, API keys or unrestricted enterprise endpoint access.
 
