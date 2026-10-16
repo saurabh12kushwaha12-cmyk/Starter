@@ -203,7 +203,7 @@ class ChallengeTests(unittest.TestCase):
             "component": "starter-app", "status": "success",
             "metadata": {"api_key": "test-secret-key", "note": "safe"},
         }
-        app.EVENTS_FILE.write_text(json.dumps(old_event) + "\\n", encoding="utf-8")
+        app.EVENTS_FILE.write_text(json.dumps(old_event) + "\n", encoding="utf-8")
         trace = app.get_trace(trace_id)
         self.assertNotEqual(trace["events"][0]["sessionId"], self.session)
         self.assertNotIn(self.session, json.dumps(trace))
