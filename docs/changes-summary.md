@@ -12,8 +12,8 @@
 - Added and validated a real Gemini REST classification integration with constrained structured output, a configurable model, and explicit degraded fallback when the provider fails.
 - Added server-side session handling and revocation on logout.
 - Enforced bearer authentication and ownership in the mock enterprise APIs, rather than relying only on the client application to check records.
-- Hardened the customer/profile/account/billing/network adapters, validated response identity and numeric billing values, and recorded failed integration calls.
-- Normalized legacy XML responses and escalated unverified legacy status instead of implying that a service was healthy.
+- Hardened the customer/profile/account/billing/service-scoped network/device-diagnostics adapters, validated response identity and numeric billing values, and recorded failed integration calls.
+- Integrated the supplied device-diagnostics endpoint, normalized legacy XML responses, and escalated failed/inconclusive checks instead of implying that a service was healthy.
 - Added explicit support-case confirmation, expiration, confirmation ownership checks, idempotency keys and atomic mock-service duplicate handling. Idempotency keys are bound to the customer, account and payload; conflicting reuse is rejected, and raw session-derived keys are never returned to the browser or stored in escalation evidence.
 - Made workflow escalation records more useful with completed steps, systems accessed, selected evidence, failed tools, error summary, pending-action context and recommended next step.
 - Redacted common email/phone/credential patterns from escalation summaries and sanitized event metadata.
