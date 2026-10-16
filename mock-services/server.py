@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -27,6 +28,7 @@ BILLING = load("billing.json")["billing"]
 OUTAGES = load("network-status.json")["outages"]
 CASES: dict[str, dict] = {}
 KEYS: dict[str, str] = {}
+MOCK_LOCK = threading.RLock()
 
 
 def find(items, key, value):
@@ -207,20 +209,23 @@ class H(BaseHTTPRequestHandler):
                     return self.js(403, {"error": "customer_account_mismatch"})
                 if not isinstance(data.get("summary"), str) or not data["summary"].strip() or len(data["summary"]) > 240:
                     return self.js(400, {"error": "valid_summary_required"})
-                if key in KEYS:
-                    prior = CASES[KEYS[key]]
-                    return self.js(200, prior)
-                case_id = "CASE-" + uuid.uuid4().hex[:8].upper()
-                KEYS[key] = case_id
-                CASES[case_id] = {
-                    "caseId": case_id,
-                    "status": "open",
-                    "customerId": customer_id,
-                    "accountId": account_id,
-                    "summary": data["summary"][:240],
-                    "idempotencyKey": key,
-                }
-                return self.js(201, CASES[case_id])
+                with MOCK_LOCK:
+                    if key in KEYS:
+                        prior = CASES.get(KEYS[key])
+                        if prior is None:
+                            return self.js(503, {"error": "idempotency_record_inconsistent"})
+                        return self.js(200, prior)
+                    case_id = "CASE-" + uuid.uuid4().hex[:8].upper()
+                    KEYS[key] = case_id
+                    CASES[case_id] = {
+                        "caseId": case_id,
+                        "status": "open",
+                        "customerId": customer_id,
+                        "accountId": account_id,
+                        "summary": data["summary"][:240],
+                        "idempotencyKey": key,
+                    }
+                    return self.js(201, CASES[case_id])
 
             if path == "/api/diagnostics":
                 data = self.json_body()
