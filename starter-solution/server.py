@@ -723,6 +723,10 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                     with STATE_LOCK:
                         done = COMPLETED_ACTIONS.get(pending_key)
                         pending = PENDING_ACTIONS.get(pending_key)
+                        if (pending and pending.get("state", "pending") != "executing"
+                                and pending.get("expiresAt", 0) <= time.time()):
+                            PENDING_ACTIONS.pop(pending_key, None)
+                            pending = None
                         if not done and not pending:
                             summary = _safe_summary(intent.get("issueSummary") or original_message, 240)
                             confirmation_id = "CONF-" + uuid.uuid4().hex[:10].upper()
@@ -972,7 +976,10 @@ def get_metrics() -> dict[str, Any]:
         if event_type in {"tool.failed", "action.failed", "integration.failure"}:
             failures_by_integration[component] = failures_by_integration.get(component, 0) + 1
     with STATE_LOCK:
-        pending_confirmation_count = sum(item.get("state", "pending") == "pending" for item in PENDING_ACTIONS.values())
+        pending_confirmation_count = sum(
+            item.get("state", "pending") == "pending" and item.get("expiresAt", 0) > time.time()
+            for item in PENDING_ACTIONS.values()
+        )
         executing_action_count = sum(item.get("state") == "executing" for item in PENDING_ACTIONS.values())
     sessions = {ev.get("sessionId") for ev in rows
                 if ev.get("sessionId") and ev.get("sessionId") not in {"anonymous", "system"}}
