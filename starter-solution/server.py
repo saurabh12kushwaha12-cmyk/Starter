@@ -209,6 +209,23 @@ def require_session(session_id: str | None, trace_id: str) -> dict[str, Any]:
         return session
 
 
+def logout_session(session_id: str) -> dict[str, Any]:
+    """Revoke an application session and discard its unfinished confirmations."""
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("session_id_required")
+    trace_id = _new_trace()
+    with STATE_LOCK:
+        session = SESSIONS.pop(session_id, None)
+        CONVERSATIONS.pop(session_id, None)
+        for key, pending in list(PENDING_ACTIONS.items()):
+            if pending.get("sessionId") == session_id and pending.get("state", "pending") != "executing":
+                PENDING_ACTIONS.pop(key, None)
+    emit("session.ended", trace_id, "success" if session else "denied",
+         session_id=session_id if session else "anonymous",
+         metadata={"reason": "user_logout" if session else "session_not_active"})
+    return {"status": "signed_out", "traceId": trace_id}
+
+
 def _is_support(session: dict[str, Any]) -> bool:
     return "support-agent" in session.get("roles", [])
 
@@ -879,7 +896,7 @@ const $=id=>document.getElementById(id);
 function addBubble(text,who='bot',meta=''){const b=document.createElement('div');b.className='bubble '+who;b.textContent=text;const wrap=document.createElement('div');wrap.appendChild(b);if(meta){const m=document.createElement('div');m.className='meta';m.textContent=meta;wrap.appendChild(m)}$('chatlog').appendChild(wrap);$('chatlog').scrollTop=$('chatlog').scrollHeight;}
 function renderResult(d){lastTrace=d.traceId||lastTrace;if(d.aiMode)$('modeTag').textContent=(d.aiMode==='live'?'Live Gemini':d.aiMode==='degraded'?'Degraded fallback':'Reviewer mode');addBubble(d.answer||JSON.stringify(d),'bot',`Status: ${d.status||'unknown'} · Trace: ${d.traceId||'n/a'}`);if(d.confirmationId){pendingConfirmation=d.confirmationId;const actions=document.createElement('div');actions.className='actions';for(const [label,value] of [['Confirm action',true],['Cancel action',false]]){const btn=document.createElement('button');btn.className=value?'':'secondary';btn.textContent=label;btn.onclick=()=>confirmAction(value);actions.appendChild(btn)}$('chatlog').appendChild(actions)}$('evidence').textContent=JSON.stringify({status:d.status,traceId:d.traceId,sources:d.sources||[],data:d.data||null,escalation:d.escalation||null},null,2);refreshMetrics();}
 async function signIn(){const b=$('loginBtn');b.disabled=true;try{const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value,password:$('password').value})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Sign in failed');sessionId=d.sessionId;$('authStatus').textContent=`${d.customerId} · ${d.roles.join(', ')}`;addBubble(`Signed in as ${d.customerId}. Account context is held server-side.`,'bot');}catch(e){addBubble(`Sign-in failed: ${e.message}`,'bot')}finally{b.disabled=false}}
-function signOut(){sessionId=null;pendingConfirmation=null;$('authStatus').textContent='Signed out';addBubble('Signed out. Protected actions require sign-in.','bot')}
+async function signOut(){const previous=sessionId;sessionId=null;pendingConfirmation=null;$('authStatus').textContent='Signed out';addBubble('Signed out. Protected actions require sign-in.','bot');if(previous){try{await fetch('/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:previous})})}catch(e){addBubble('Local sign-out completed; server session revocation could not be confirmed.','bot')}}}
 async function sendMessage(){const message=$('message').value.trim();if(!message)return; $('message').value='';addBubble(message,'user');try{const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,sessionId})});const d=await r.json();renderResult(d)}catch(e){addBubble('Request failed. Check whether both local servers are running.','bot')}}
 async function confirmAction(confirmed){if(!sessionId||!pendingConfirmation)return;try{const r=await fetch('/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId,confirmationId:pendingConfirmation,confirmed})});const d=await r.json();pendingConfirmation=null;renderResult(d)}catch(e){addBubble('Could not confirm the action.','bot')}}
 async function refreshMetrics(){try{const [h,m]=await Promise.all([fetch('/health').then(r=>r.json()),fetch('/metrics').then(r=>r.json())]);$('healthStatus').textContent=`App ${h.status} · Mock API ${h.mockApi}`;$('geminiStatus').textContent=h.aiMode;$('mRequests').textContent=m.totalRequests||0;$('mSessions').textContent=m.totalSessions||0;$('mResolved').textContent=m.resolvedRequests||0;$('mResolutionRate').textContent=(m.resolutionRate||0)+'%';$('mEscalated').textContent=m.escalatedRequests||0;$('mFailures').textContent=m.failedRequests||0;$('mToolSuccess').textContent=(m.toolCallSuccessRate||0)+'%';$('mGeminiLatency').textContent=(m.averageGeminiLatencyMs||0)+' ms';$('mPending').textContent=m.pendingConfirmations||0;$('mClarifications').textContent=m.clarificationRequests||0;$('mRetries').textContent=m.retryEvents||0;$('mEvents').textContent=m.eventCount||0;}catch(e){$('healthStatus').textContent='Health check failed'}}
@@ -955,13 +972,21 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     user = login(body.get("username"), body.get("password"))
                     trace = _new_trace()
-                    emit("authentication.succeeded", trace, session_id=user["sessionId"], metadata={"customerId": user["customerId"], "roles": user["roles"]})
+                    emit("session.started", trace, session_id=user["sessionId"],
+                         metadata={"customerId": user["customerId"], "roles": user["roles"]})
+                    emit("authentication.succeeded", trace, session_id=user["sessionId"],
+                         metadata={"customerId": user["customerId"], "roles": user["roles"]})
                     return self._send(200, user)
                 except ServiceError as exc:
                     trace = _new_trace()
                     emit("authentication.failed", trace, "denied", metadata={"reason": exc.safe_message})
                     status = exc.status or 401
                     return self._send(status, {"error": exc.safe_message})
+            if path == "/auth/logout":
+                session_id = body.get("sessionId")
+                if not isinstance(session_id, str):
+                    return self._send(400, {"error": "sessionId_required"})
+                return self._send(200, logout_session(session_id))
             if path == "/chat":
                 try:
                     result = handle_chat(body.get("message"), body.get("sessionId"))
