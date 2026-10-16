@@ -458,7 +458,7 @@ class ChallengeTests(unittest.TestCase):
         with patch.dict(os.environ, {"MOCK_LEGACY_MODE": "unavailable"}):
             result = app.handle_chat("My mobile service is slow", jordan["sessionId"])
         self.assertEqual(result["status"], "escalated")
-        self.assertIn("could not verify", result["answer"].lower())
+        self.assertIn("could not fully verify", result["answer"].lower())
         self.assertIn("legacy-adapter", result["escalation"]["enterpriseSystemsAccessed"])
         self.assertTrue(result["escalation"]["failedTools"])
 
