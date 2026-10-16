@@ -93,6 +93,7 @@ class ChallengeTests(unittest.TestCase):
 
     def test_plan_inquiry_is_grounded_in_account_api(self):
         result = app.handle_chat("What internet plan am I currently using?", self.session)
+        self.assertNotIn("sessionId", result)
         self.assertEqual(result["status"], "resolved")
         self.assertIn("Fiber 500", result["answer"])
         self.assertEqual(result["sources"], ["account-service"])
