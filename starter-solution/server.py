@@ -921,7 +921,7 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
     emit("confirmation.received", trace_id, session_id=session_id, metadata={"confirmed": bool(confirmed)})
     if not confirmed:
         emit("action.cancelled", trace_id, session_id=session_id, component="case-management", metadata={"actionType": "create_support_case"})
-        emit("workflow.cancelled", trace_id, "cancelled", session_id=session_id,
+        emit("workflow.cancelled", trace_id, "success", session_id=session_id,
              duration_ms=(time.monotonic() - workflow_started) * 1000, metadata={"status": "cancelled"})
         return {"traceId": trace_id, "status": "cancelled", "answer": "No support case was created.", "aiMode": "reviewer"}
     action = pending["action"]
