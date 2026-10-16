@@ -502,12 +502,30 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
     result = _respond("", trace_id, session, status="resolved", extra={"intent": intent["intent"], "aiMode": actual_mode})
 
     if intent["intent"] == "other":
-        result.update(answer="I can help with your plan, bill, internet/mobile service issue, subscriber status, or support case. What would you like to check?", status="clarification")
-    elif intent["intent"] == "service_issue" and not intent.get("serviceType"):
         if session:
             session["pendingClarification"] = original_message
-        result.update(answer="Which service is affected: home internet or mobile?", status="clarification", missingFields=["serviceType"])
-        emit("clarification.requested", trace_id, "pending", session_id=session_id or "anonymous", metadata={"field": "serviceType"})
+        result.update(answer="I can help with your plan, bill, internet/mobile service issue, subscriber status, or support case. Which of these would you like to work on?", status="clarification")
+        emit("clarification.requested", trace_id, "pending", session_id=session_id or "anonymous", metadata={"field": "intent"})
+    elif intent.get("clarificationNeeded") or (intent["intent"] == "service_issue" and not intent.get("serviceType")):
+        missing_field = "details"
+        if intent["intent"] == "service_issue" and not intent.get("serviceType"):
+            question = "Which service is affected: home internet or mobile?"
+            missing_field = "serviceType"
+        elif intent["intent"] == "billing":
+            question = "Are you checking the current bill amount, or is there a particular charge you want support to review? This demo can verify the current bill and escalate a dispute."
+            missing_field = "billingQuestion"
+        elif intent["intent"] == "create_case":
+            question = "What issue summary should I include in the support case?"
+            missing_field = "issueSummary"
+        elif intent["intent"] == "legacy_status":
+            question = "Which service do you want checked: home internet or mobile?"
+            missing_field = "serviceType"
+        else:
+            question = "Could you provide the specific detail needed to check your request?"
+        if session:
+            session["pendingClarification"] = original_message
+        result.update(answer=question, status="clarification", missingFields=[missing_field])
+        emit("clarification.requested", trace_id, "pending", session_id=session_id or "anonymous", metadata={"field": missing_field})
     else:
         # Protected intents must have authenticated context before any account/API access.
         if not session:
