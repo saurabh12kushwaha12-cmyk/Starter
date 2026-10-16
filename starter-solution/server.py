@@ -879,15 +879,23 @@ def get_trace(trace_id: str) -> dict[str, Any]:
     if not events and EVENTS_FILE.exists():
         try:
             with EVENTS_FILE.open(encoding="utf-8") as handle:
-                events = [json.loads(line) for line in handle if line.strip() and json.loads(line).get("traceId") == trace_id]
-            # Older local log files may predate session-reference hashing. Redact on read as well.
-            for event in events:
-                raw_session = event.get("sessionId")
-                if isinstance(raw_session, str) and raw_session not in {"system", "anonymous"}:
-                    if not re.fullmatch(r"SESSION-[A-F0-9]{12}", raw_session):
-                        event["sessionId"] = _telemetry_session_ref(raw_session)
-                event["metadata"] = _safe_metadata(event.get("metadata", {}))
-        except (OSError, json.JSONDecodeError):
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(event, dict) or event.get("traceId") != trace_id:
+                        continue
+                    # Older local log files may predate session-reference hashing. Redact on read as well.
+                    raw_session = event.get("sessionId")
+                    if isinstance(raw_session, str) and raw_session not in {"system", "anonymous"}:
+                        if not re.fullmatch(r"SESSION-[A-F0-9]{12}", raw_session):
+                            event["sessionId"] = _telemetry_session_ref(raw_session)
+                    event["metadata"] = _safe_metadata(event.get("metadata", {}))
+                    events.append(event)
+        except OSError:
             events = []
     return {"traceId": trace_id, "events": events, "eventCount": len(events)}
 
