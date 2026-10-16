@@ -3,8 +3,10 @@ info:
   title: Synthetic Telecom APIs
   version: 1.1.0
   description: >
-    Challenge-only synthetic APIs. Login returns a synthetic bearer token.
-    All data/action endpoints except health require bearer authentication and enforce ownership.
+    Challenge-only synthetic APIs. Login returns a random, short-lived opaque bearer token.
+    All data/action endpoints except health and login require bearer authentication and enforce
+    customer ownership or the synthetic support-agent role. Support-case idempotency keys are
+    bound to the original customer, account and request payload; conflicting reuse returns HTTP 409.
 servers:
   - url: http://127.0.0.1:8090
 components:
@@ -157,6 +159,7 @@ paths:
         '400': {description: Invalid action payload}
         '401': {description: Bearer token required or invalid}
         '403': {description: Account/customer ownership denied}
+        '409': {description: Idempotency key was previously used with another account or payload}
         '503': {description: Case-management service unavailable}
   /api/legacy/subscriber-status:
     post:
