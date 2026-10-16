@@ -847,8 +847,8 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
                                "Inspect the case-management service and verify the idempotency key before any retry.",
                                session["customerId"],
                                pending_action={"type": "create_support_case", "accountId": account_id,
-                                               "idempotencyKey": action_key, "summary": action["summary"],
-                                               "executionOutcome": "unverified"})
+                                               "idempotencyKeyRef": hashlib.sha256(action_key.encode("utf-8")).hexdigest()[:12],
+                                               "summary": action["summary"], "executionOutcome": "unverified"})
         with STATE_LOCK:
             PENDING_ACTIONS.pop(action_key, None)
         emit("workflow.escalated", trace_id, "pending", session_id=session_id, metadata={"reason": exc.safe_message})
@@ -864,8 +864,8 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
             "Inspect the case-management trace and verify the idempotency key before retrying.",
             session["customerId"],
             pending_action={"type": "create_support_case", "accountId": account_id,
-                            "idempotencyKey": action_key, "summary": action["summary"],
-                            "executionOutcome": "unverified"})
+                            "idempotencyKeyRef": hashlib.sha256(action_key.encode("utf-8")).hexdigest()[:12],
+                            "summary": action["summary"], "executionOutcome": "unverified"})
         emit("workflow.escalated", trace_id, "pending", session_id=session_id,
              metadata={"reason": "internal_processing_failure"})
         return {"traceId": trace_id, "status": "escalated",
