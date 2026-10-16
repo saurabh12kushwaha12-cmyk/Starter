@@ -29,21 +29,24 @@
 
 ## Current work checklist
 
-- [ ] Inspect the supplied ZIP and map the actual starter project structure.
-- [ ] Run the existing starter locally and record the initial state.
-- [ ] Map every requirement to an existing component, planned change, test and evidence.
-- [ ] Complete Gemini integration and validate structured outputs.
-- [ ] Complete or improve workflow/orchestration and state management.
-- [ ] Enforce authentication, authorization and customer isolation.
-- [ ] Complete modern enterprise API integrations and legacy telecom adapter.
-- [ ] Implement at least one safely confirmed consequential action with duplicate protection.
-- [ ] Implement failure handling, fallback and human escalation.
-- [ ] Implement structured telemetry, traces and event-derived metrics.
-- [ ] Implement both Live AI and Reviewer modes.
-- [ ] Automate all eight mandatory evaluation scenarios and additional test cases.
-- [ ] Prepare README, architecture diagram, deployment documentation, handover package and requirement-to-evidence matrix.
-- [ ] Record a reproducible 3–5 minute demonstration and write a summary of changes.
-- [ ] Re-run the full tests and verify the submitted repository from a clean setup.
+Status key: `[x]` implemented and covered by repository evidence; `[~]` implemented in part or still needs participant-side/live verification; `[ ]` not yet completed.
+
+- [x] Inspect the supplied ZIP and map the starter project structure; source/resources are present in this repository.
+- [~] Run the app locally and record the initial baseline; GitHub Actions runs the app's compile/tests in clean runners, but participant-side manual local testing is still needed.
+- [x] Map requirements to implementation, supporting tests, scenarios and limitations in `docs/requirement-to-evidence.md`.
+- [~] Implement Gemini REST integration and structured output validation; successful Live AI execution with a valid private credential has not yet been verified.
+- [~] Implement deterministic workflow orchestration, bounded context and in-memory session/confirmation state; this is a single-process PoC, not a distributed workflow service.
+- [x] Enforce authentication, authorization and customer isolation in the application and the mock enterprise API.
+- [x] Implement the supplied mock enterprise API adapters and legacy XML normalization/error handling.
+- [x] Implement confirmed support-case creation, server-side idempotency, duplicate protection and unverified-outcome escalation.
+- [x] Implement provider/service failure handling, deterministic degraded mode and human escalation for the supplied failure switches.
+- [~] Implement structured events, redaction, request traces and event-derived metrics using local JSONL persistence; managed Cloud telemetry export is not implemented.
+- [~] Provide Live AI and Reviewer modes; Reviewer mode is testable offline, while a successful Live AI request still needs a participant-side check.
+- [x] Add automated coverage for all eight mandatory scenario families and security/failure edge cases.
+- [x] Prepare README, architecture, Google Cloud deployment mapping, handover documentation, requirement-to-evidence matrix and summary of changes.
+- [ ] Record and attach the requested reproducible 3–5 minute demo video.
+- [~] Verify tests in GitHub Actions after the latest changes; re-check the latest run before submission and run the documented local commands from a clean checkout.
+
 
 ---
 
