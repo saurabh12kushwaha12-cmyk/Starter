@@ -223,6 +223,10 @@ class ChallengeTests(unittest.TestCase):
         metrics = app.get_metrics()
         self.assertGreater(metrics["toolCallSuccessRate"], 0)
         self.assertGreater(metrics["averageRecordedDurationMs"], 0)
+        self.assertGreater(metrics["averageWorkflowDurationMs"], 0)
+        self.assertGreaterEqual(metrics["totalSessions"], 1)
+        self.assertIn("workflow-orchestrator", metrics["agentUsage"])
+        self.assertIn("account-service", metrics["toolUsage"])
 
     def test_mock_enterprise_api_rejects_missing_bearer_token(self):
         with self.assertRaises(app.ServiceError) as raised:
