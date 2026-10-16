@@ -28,7 +28,9 @@ flowchart TD
 - Intent outputs are parsed and allow-listed. Record ownership, authorization, action parameters, confirmation, and idempotency are controlled by deterministic Python logic.
 - Enterprise reads go through adapters that validate expected response fields. The legacy service response is parsed from XML and normalized before use.
 - Consequential case creation happens only after a user confirmation and includes an idempotency key. An unverified backend outcome is never reported as success.
-- Telemetry uses trace IDs and sanitized metadata. Passwords, access tokens, API keys, and test passwords are not included in app-generated event metadata.
+- Telemetry uses trace IDs, sanitized metadata, and stable hashed session references. The actual bearer-like application session ID is never written into new events or returned in traces. Historical local event files are redacted on trace reads as well.
+- Metrics, traces, and escalation-list endpoints require an active session with the synthetic `support-agent` role. Customer sessions cannot inspect cross-customer operational evidence.
+- Gemini receives a sanitized request summary and sanitized recent user messages only; assistant response history and the server-side enterprise access token are not sent to the model. Support-case summaries and escalation reasons are also sanitized before persistence.
 
 ## State/persistence
 
