@@ -169,8 +169,26 @@ class ChallengeTests(unittest.TestCase):
         self.assertIn(second["status"], {"resolved", "escalated"})
         self.assertTrue(any(source in second.get("sources", []) for source in ("network-diagnostics", "legacy-service")))
 
+    def test_legacy_status_asks_for_service_when_ambiguous(self):
+        app.AI_MODE = "live"
+        with patch.object(app, "_gemini_intent", return_value={
+            "intent": "legacy_status", "accountId": None, "serviceType": None,
+            "postalCode": None, "issueSummary": "Check subscriber status",
+            "clarificationNeeded": False,
+        }):
+            result = app.handle_chat("Check subscriber status", self.session)
+        self.assertEqual(result["status"], "clarification")
+        self.assertIn("serviceType", result["missingFields"])
+        self.assertIn("home internet or mobile", result["answer"].lower())
+
+    def test_legacy_status_never_uses_a_different_service_type(self):
+        with patch.object(app, "_legacy_status") as legacy_call:
+            result = app.handle_chat("Check my mobile subscriber status", self.session)
+        self.assertEqual(result["status"], "escalated")
+        legacy_call.assert_not_called()
+
     def test_legacy_xml_response_is_normalized(self):
-        result = app.handle_chat("Check my legacy subscriber status", self.session)
+        result = app.handle_chat("Check my home internet legacy subscriber status", self.session)
         self.assertEqual(result["status"], "resolved")
         self.assertEqual(result["data"]["accountId"], "ACC-2001")
         self.assertEqual(result["data"]["serviceId"], "SVC-5001")
@@ -362,7 +380,7 @@ class ChallengeTests(unittest.TestCase):
 
     def test_malformed_legacy_xml_is_not_reported_as_success(self):
         with patch.dict(os.environ, {"MOCK_LEGACY_MODE": "malformed"}):
-            result = app.handle_chat("Check my legacy subscriber status", self.session)
+            result = app.handle_chat("Check my home internet legacy subscriber status", self.session)
         self.assertEqual(result["status"], "escalated")
         self.assertNotIn("subscriber status: service active", result["answer"].lower())
 
@@ -478,7 +496,7 @@ class ChallengeTests(unittest.TestCase):
             "serviceStatus": "unknown", "networkStatus": "unknown",
             "errorCode": "503", "error": "legacy_unavailable"
         }):
-            result = app.handle_chat("Check my legacy subscriber status", self.session)
+            result = app.handle_chat("Check my home internet legacy subscriber status", self.session)
         self.assertEqual(result["status"], "escalated")
         self.assertIn("legacy_unavailable", result["answer"])
 
