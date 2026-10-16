@@ -402,14 +402,45 @@ def classify(message: str, session_id: str, trace_id: str) -> tuple[dict[str, An
 
 
 def _escalate(trace_id: str, session_id: str, request_summary: str, reason: str,
-              completed_steps: list[str], next_step: str, customer_id: str | None = None) -> dict[str, Any]:
+              completed_steps: list[str], next_step: str, customer_id: str | None = None,
+              pending_action: dict[str, Any] | None = None) -> dict[str, Any]:
+    events = get_trace(trace_id).get("events", [])
+    accessed = []
+    failed = []
+    evidence = []
+    for event in events:
+        event_type = event.get("eventType")
+        component = event.get("component")
+        if event_type in {"tool.invoked", "tool.completed", "tool.failed", "action.failed"} and component:
+            if component not in accessed:
+                accessed.append(component)
+        if event_type in {"tool.failed", "action.failed"} or (
+            event_type == "workflow.failed" and event.get("status") == "failure"
+        ):
+            failed.append({"component": component or "unknown", "eventType": event_type,
+                           "status": event.get("status", "failure"),
+                           "metadata": event.get("metadata", {})})
+        if event_type in {"tool.completed", "tool.failed", "authorization.denied",
+                          "confirmation.received", "action.failed", "gemini.failure"}:
+            evidence.append({"eventId": event.get("eventId"), "eventType": event_type,
+                             "component": component, "status": event.get("status"),
+                             "metadata": event.get("metadata", {})})
     record = {
         "escalationId": "ESC-" + uuid.uuid4().hex[:10].upper(),
         "traceId": trace_id,
         "customerId": customer_id,
         "requestSummary": request_summary[:300],
-        "completedSteps": completed_steps[:20],
+        "verifiedContext": {"customerId": customer_id, "authenticatedSession": bool(session_id and session_id not in {"system", "anonymous"})},
+        "completedSteps": list(dict.fromkeys(completed_steps + [
+            f"{event.get('component')} completed" for event in events
+            if event.get("eventType") == "tool.completed" and event.get("component")
+        ]))[:30],
+        "enterpriseSystemsAccessed": accessed[:20],
+        "evidence": evidence[-30:],
+        "failedTools": failed[-20:],
+        "errorSummary": reason[:240],
         "reason": reason[:240],
+        "pendingAction": _safe_metadata(pending_action) if pending_action else None,
         "recommendedNextStep": next_step[:240],
         "createdAt": utcnow(),
     }
@@ -417,7 +448,9 @@ def _escalate(trace_id: str, session_id: str, request_summary: str, reason: str,
         ESCALATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
         with ESCALATIONS_FILE.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-    emit("escalation.created", trace_id, "pending", session_id=session_id, component="escalation", metadata={"escalationId": record["escalationId"], "reason": reason})
+    emit("escalation.created", trace_id, "pending", session_id=session_id, component="escalation",
+         metadata={"escalationId": record["escalationId"], "reason": reason,
+                   "failedToolCount": len(failed), "systemsAccessed": accessed})
     return record
 
 
@@ -527,17 +560,22 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                     with STATE_LOCK:
                         done = COMPLETED_ACTIONS.get(pending_key)
                         pending = PENDING_ACTIONS.get(pending_key)
+                        if not done and not pending:
+                            summary = intent.get("issueSummary") or original_message
+                            confirmation_id = "CONF-" + uuid.uuid4().hex[:10].upper()
+                            action = {"type": "create_support_case", "accountId": account_id, "customerId": session["customerId"], "summary": summary[:240], "idempotencyKey": pending_key}
+                            pending = {"confirmationId": confirmation_id, "sessionId": session_id, "action": action,
+                                       "summary": f"I will create a support case for account {account_id}: {summary[:200]}. Please confirm before I submit it.",
+                                       "traceId": trace_id, "expiresAt": time.time() + 600, "state": "pending"}
+                            PENDING_ACTIONS[pending_key] = pending
                     if done:
                         result.update(answer="This support case was already created. I will not create a duplicate.", status="resolved", data=done, sources=["case-management"], actionAlreadyCompleted=True)
                     elif pending:
-                        result.update(answer=pending["summary"], status="confirmation_required", confirmationId=pending["confirmationId"], action=pending["action"])
-                    else:
-                        summary = intent.get("issueSummary") or original_message
-                        confirmation_id = "CONF-" + uuid.uuid4().hex[:10].upper()
-                        action = {"type": "create_support_case", "accountId": account_id, "customerId": session["customerId"], "summary": summary[:240], "idempotencyKey": pending_key}
-                        PENDING_ACTIONS[pending_key] = {"confirmationId": confirmation_id, "sessionId": session_id, "action": action, "summary": f"I will create a support case for account {account_id}: {summary[:200]}. Please confirm before I submit it.", "traceId": trace_id, "expiresAt": time.time() + 600}
-                        emit("confirmation.requested", trace_id, "pending", session_id=session_id, metadata={"actionType": "create_support_case"})
-                        result.update(answer=PENDING_ACTIONS[pending_key]["summary"], status="confirmation_required", confirmationId=confirmation_id, action="create_support_case")
+                        if pending.get("state") == "executing":
+                            result.update(answer="This support-case request is already being processed. Please wait for its outcome.", status="pending")
+                        else:
+                            emit("confirmation.requested", trace_id, "pending", session_id=session_id, metadata={"actionType": "create_support_case"})
+                            result.update(answer=pending["summary"], status="confirmation_required", confirmationId=pending["confirmationId"], action=pending["action"])
                 else:
                     result.update(answer="I could not map that request to a supported workflow. Please rephrase or ask for support.", status="clarification")
             except ServiceError as exc:
@@ -563,26 +601,39 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
     trace_id = _new_trace()
     session = require_session(session_id, trace_id)
     with STATE_LOCK:
-        match = next(((key, value) for key, value in PENDING_ACTIONS.items() if value.get("confirmationId") == confirmation_id), None)
+        match = next(((key, value) for key, value in PENDING_ACTIONS.items()
+                      if value.get("confirmationId") == confirmation_id), None)
     if not match:
         raise ServiceError("case-management", "confirmation_not_found_or_expired", 404)
     action_key, pending = match
     if pending["sessionId"] != session_id:
         emit("authorization.denied", trace_id, "denied", session_id=session_id, metadata={"reason": "confirmation_owner_mismatch"})
         raise ServiceError("authorization", "confirmation_access_denied", 403)
-    if pending["expiresAt"] <= time.time():
-        with STATE_LOCK:
+    account_id = authorized_account(session, pending["action"].get("accountId"), trace_id) if confirmed else None
+    if confirmed and account_id != pending["action"].get("accountId"):
+        raise ServiceError("authorization", "access_denied", 403)
+    with STATE_LOCK:
+        current = PENDING_ACTIONS.get(action_key)
+        if current is not pending:
+            completed = COMPLETED_ACTIONS.get(action_key)
+            if completed:
+                return {"traceId": trace_id, "status": "resolved",
+                        "answer": f"Support case {completed['caseId']} was already created and verified.",
+                        "data": completed, "sources": ["case-management"], "aiMode": "reviewer"}
+            raise ServiceError("case-management", "confirmation_not_found_or_expired", 404)
+        if pending["expiresAt"] <= time.time():
             PENDING_ACTIONS.pop(action_key, None)
-        raise ServiceError("case-management", "confirmation_expired", 410)
+            raise ServiceError("case-management", "confirmation_expired", 410)
+        if pending.get("state", "pending") == "executing":
+            raise ServiceError("case-management", "action_already_in_progress", 409)
+        if confirmed:
+            pending["state"] = "executing"
+        else:
+            PENDING_ACTIONS.pop(action_key, None)
     emit("confirmation.received", trace_id, session_id=session_id, metadata={"confirmed": bool(confirmed)})
     if not confirmed:
-        with STATE_LOCK:
-            PENDING_ACTIONS.pop(action_key, None)
         emit("action.cancelled", trace_id, session_id=session_id, metadata={"actionType": "create_support_case"})
         return {"traceId": trace_id, "status": "cancelled", "answer": "No support case was created.", "aiMode": "reviewer"}
-    account_id = authorized_account(session, pending["action"].get("accountId"), trace_id)
-    if account_id != pending["action"].get("accountId"):
-        raise ServiceError("authorization", "access_denied", 403)
     action = pending["action"]
     try:
         payload = {"customerId": session["customerId"], "accountId": account_id,
@@ -603,7 +654,10 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
         emit("action.failed", trace_id, "failure", session_id=session_id, component="case-management", metadata={"reason": exc.safe_message})
         escalation = _escalate(trace_id, session_id, action["summary"], exc.safe_message,
                                ["customer authenticated", "authorization verified", "customer confirmation received"],
-                               "Inspect the case-management service and create the case only after checking the idempotency key.", session["customerId"])
+                               "Inspect the case-management service and verify the idempotency key before any retry.",
+                               session["customerId"],
+                               pending_action={"type": "create_support_case", "accountId": account_id,
+                                               "summary": action["summary"], "executionOutcome": "unverified"})
         with STATE_LOCK:
             PENDING_ACTIONS.pop(action_key, None)
         emit("workflow.escalated", trace_id, "pending", session_id=session_id, metadata={"reason": exc.safe_message})
