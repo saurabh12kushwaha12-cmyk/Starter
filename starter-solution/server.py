@@ -631,7 +631,7 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                     result.update(answer="I could not map that request to a supported workflow. Please rephrase or ask for support.", status="clarification")
             except ServiceError as exc:
                 status_code = exc.status or (403 if exc.service == "authorization" else 503)
-                emit("workflow.failed", trace_id, "denied" if status_code in {401, 403} else "failure", session_id=session["sessionId"], metadata={"service": exc.service, "reason": exc.safe_message, "httpStatus": status_code})
+                emit("integration.failure", trace_id, "denied" if status_code in {401, 403} else "failure", session_id=session["sessionId"], component=exc.service, metadata={"reason": exc.safe_message, "httpStatus": status_code})
                 if status_code >= 500 or exc.service not in {"authorization", "authentication"}:
                     escalation = _escalate(trace_id, session["sessionId"], original_message, exc.safe_message, ["request received", "intent classified"], "Support representative should inspect the trace and verify the affected integration.", session["customerId"])
                     result.update(answer="I could not safely complete this request because a required service did not return a verifiable result. I recorded an escalation for support.", status="escalated", escalation=escalation, httpStatus=status_code)
@@ -648,9 +648,22 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                 result.update(answer="An internal processing issue prevented safe completion. The request was escalated for review.",
                               status="escalated", escalation=escalation)
     result["aiMode"] = actual_mode
-    emit("workflow.resolved" if result.get("status") in {"resolved", "clarification", "confirmation_required"} else "workflow.escalated" if result.get("status") == "escalated" else "workflow.failed",
-         trace_id, "success" if result.get("status") in {"resolved", "clarification", "confirmation_required"} else "pending" if result.get("status") == "escalated" else "failure",
-         session_id=session_id or "anonymous", duration_ms=(time.monotonic() - workflow_started) * 1000, metadata={"intent": intent["intent"], "status": result.get("status")})
+    final_status = result.get("status")
+    if final_status == "resolved":
+        final_event, final_state = "workflow.resolved", "success"
+    elif final_status == "escalated":
+        final_event, final_state = "workflow.escalated", "pending"
+    elif final_status == "clarification":
+        final_event, final_state = "workflow.clarification", "pending"
+    elif final_status in {"confirmation_required", "pending"}:
+        final_event, final_state = "workflow.pending_confirmation", "pending"
+    elif final_status == "cancelled":
+        final_event, final_state = "workflow.cancelled", "cancelled"
+    else:
+        final_event, final_state = "workflow.failed", "failure"
+    emit(final_event, trace_id, final_state,
+         session_id=session_id or "anonymous", duration_ms=(time.monotonic() - workflow_started) * 1000,
+         metadata={"intent": intent["intent"], "status": final_status})
     if session:
         with STATE_LOCK:
             CONVERSATIONS.setdefault(session_id, {"messages": [], "lastTraceId": None})["messages"].append({"role": "assistant", "content": str(result.get("answer", ""))[:300]})
@@ -693,7 +706,9 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
             PENDING_ACTIONS.pop(action_key, None)
     emit("confirmation.received", trace_id, session_id=session_id, metadata={"confirmed": bool(confirmed)})
     if not confirmed:
-        emit("action.cancelled", trace_id, session_id=session_id, metadata={"actionType": "create_support_case"})
+        emit("action.cancelled", trace_id, session_id=session_id, component="case-management", metadata={"actionType": "create_support_case"})
+        emit("workflow.cancelled", trace_id, "cancelled", session_id=session_id,
+             duration_ms=(time.monotonic() - workflow_started) * 1000, metadata={"status": "cancelled"})
         return {"traceId": trace_id, "status": "cancelled", "answer": "No support case was created.", "aiMode": "reviewer"}
     action = pending["action"]
     try:
@@ -770,17 +785,25 @@ def get_metrics() -> dict[str, Any]:
     traces: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         traces.setdefault(row.get("traceId", "unknown"), []).append(row)
-    terminal = [ev for ev in rows if ev.get("eventType") in {"workflow.resolved", "workflow.failed", "workflow.escalated"}]
+    terminal = [ev for ev in rows if ev.get("eventType") in {
+        "workflow.resolved", "workflow.failed", "workflow.escalated", "workflow.cancelled"
+    }]
     terminal_traces = {ev.get("traceId") for ev in terminal if ev.get("traceId")}
-    resolved_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.resolved"}
+    resolved_traces = {ev.get("traceId") for ev in terminal
+                       if ev.get("eventType") == "workflow.resolved"
+                       and ev.get("metadata", {}).get("status") == "resolved"}
     escalated_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.escalated"}
     failed_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.failed"}
+    cancelled_traces = {ev.get("traceId") for ev in terminal if ev.get("eventType") == "workflow.cancelled"}
     terminal_count = max(1, len(terminal_traces))
     durations = [ev.get("durationMs") for ev in rows if isinstance(ev.get("durationMs"), (int, float))]
     tool_events = [ev for ev in rows if ev.get("eventType") in {"tool.completed", "tool.failed"}]
     return {
         "totalRequests": len({ev.get("traceId") for ev in rows if ev.get("eventType") == "request.received"}),
-        "resolvedRequests": len(resolved_traces), "escalatedRequests": len(escalated_traces), "failedRequests": len(failed_traces),
+        "resolvedRequests": len(resolved_traces), "escalatedRequests": len(escalated_traces),
+        "failedRequests": len(failed_traces), "cancelledRequests": len(cancelled_traces),
+        "clarificationRequests": sum(ev.get("eventType") == "clarification.requested" for ev in rows),
+        "pendingConfirmations": sum(ev.get("eventType") == "workflow.pending_confirmation" for ev in rows),
         "resolutionRate": round(len(resolved_traces) / terminal_count * 100, 2),
         "escalationRate": round(len(escalated_traces) / terminal_count * 100, 2),
         "failureRate": round(len(failed_traces) / terminal_count * 100, 2),
