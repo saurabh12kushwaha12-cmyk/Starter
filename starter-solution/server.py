@@ -90,13 +90,20 @@ def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     return safe
 
 
+def _telemetry_session_ref(session_id: str) -> str:
+    """Return a stable, non-authenticating reference; never publish the bearer session ID."""
+    if not session_id or session_id in {"system", "anonymous"}:
+        return session_id or "anonymous"
+    return "SESSION-" + hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12].upper()
+
+
 def emit(event_type: str, trace_id: str, status: str = "success", *, session_id: str = "system",
          component: str = "starter-app", duration_ms: float | None = None,
          metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     event: dict[str, Any] = {
         "eventId": "EVT-" + uuid.uuid4().hex[:12],
         "traceId": trace_id,
-        "sessionId": session_id,
+        "sessionId": _telemetry_session_ref(session_id),
         "timestamp": utcnow(),
         "eventType": event_type,
         "component": component,
