@@ -161,11 +161,29 @@ class H(BaseHTTPRequestHandler):
             principal = self.require_principal()
             if principal is None:
                 return
-            postal_code = parse_qs(parsed.query).get("postalCode", [""])[0]
-            if not self.is_support(principal) and postal_code != principal.get("postalCode"):
-                return self.js(403, {"error": "access_denied"})
+            query = parse_qs(parsed.query)
+            postal_code = query.get("postalCode", [""])[0]
+            service_type = query.get("serviceType", [""])[0]
+            if not self.is_support(principal):
+                if postal_code != principal.get("postalCode"):
+                    return self.js(403, {"error": "access_denied"})
+                if service_type:
+                    account = account_for_customer(principal["customerId"])
+                    owns_service_type = any(
+                        service.get("type") == service_type
+                        for service in (account or {}).get("services", [])
+                    )
+                    if not owns_service_type:
+                        return self.js(403, {"error": "access_denied"})
             outage = find(OUTAGES, "postalCode", postal_code)
-            return self.js(200, outage or {"postalCode": postal_code, "status": "unknown"})
+            if outage and service_type and outage.get("serviceType") != service_type:
+                return self.js(200, {"postalCode": postal_code, "serviceType": service_type, "status": "unknown"})
+            if outage:
+                return self.js(200, outage)
+            response = {"postalCode": postal_code, "status": "unknown"}
+            if service_type:
+                response["serviceType"] = service_type
+            return self.js(200, response)
 
         return self.js(404, {"error": "not_found"})
 
