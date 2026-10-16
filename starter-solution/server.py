@@ -739,7 +739,9 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                             result.update(answer="This support-case request is already being processed. Please wait for its outcome.", status="pending")
                         else:
                             emit("confirmation.requested", trace_id, "pending", session_id=session_id, metadata={"actionType": "create_support_case"})
-                            result.update(answer=pending["summary"], status="confirmation_required", confirmationId=pending["confirmationId"], action=pending["action"])
+                            # Never return the internal idempotency key or stored auth context to the browser.
+                            result.update(answer=pending["summary"], status="confirmation_required",
+                                          confirmationId=pending["confirmationId"])
                 else:
                     result.update(answer="I could not map that request to a supported workflow. Please rephrase or ask for support.", status="clarification")
             except ServiceError as exc:
