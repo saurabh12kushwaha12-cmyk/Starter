@@ -198,15 +198,18 @@ def call_json(method: str, path: str, *, payload: dict[str, Any] | None = None,
             status, raw, _ = request_raw(method, path, payload=payload, headers=headers)
             data = json.loads(raw.decode("utf-8")) if raw else {}
             if not isinstance(data, dict):
-                raise ServiceError(path, "malformed_response", status)
+                raise ServiceError(component, "malformed_response", status)
             return data
         except ServiceError as exc:
-            last_error = exc
+            last_error = ServiceError(component, exc.safe_message, exc.status)
             if attempt + 1 >= attempts or (exc.status is not None and exc.status < 500):
                 break
             time.sleep(0.05 * (attempt + 1))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ServiceError(path, "malformed_response") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            last_error = ServiceError(component, "malformed_response")
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(0.05 * (attempt + 1))
     assert last_error is not None
     if trace_id:
         emit("tool.failed", trace_id, "failure", session_id=session_id, component=component,
