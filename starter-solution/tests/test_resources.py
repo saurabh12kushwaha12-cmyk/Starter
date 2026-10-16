@@ -124,6 +124,26 @@ class ChallengeTests(unittest.TestCase):
         with self.assertRaises(app.ServiceError):
             self.login(password="wrong")
 
+    def test_login_rejects_malformed_authentication_service_responses(self):
+        invalid_payloads = [
+            {"accessToken": "opaque-token", "customerId": "CUST-1001",
+             "accountId": "ACC-2001", "roles": ["customer"], "expiresIn": "3600"},
+            {"accessToken": "opaque-token", "customerId": "CUST-1001",
+             "accountId": "ACC-2001", "roles": ["customer", 17], "expiresIn": 3600},
+            {"accessToken": "opaque-token", "customerId": "CUST-1001",
+             "accountId": "ACC-999999", "roles": ["customer"], "expiresIn": 3600},
+            {"accessToken": "", "customerId": "CUST-1001",
+             "accountId": "ACC-2001", "roles": ["customer"], "expiresIn": 3600},
+        ]
+        before = set(app.SESSIONS)
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with patch.object(app, "call_json", return_value=payload):
+                    with self.assertRaises(app.ServiceError) as raised:
+                        app.login("alex.morgan", "ReviewerPass-1001")
+                self.assertEqual(raised.exception.status, 401)
+                self.assertEqual(set(app.SESSIONS), before)
+
     def test_auth_context_is_server_side_and_not_returned(self):
         self.assertIn("sessionId", self.alex)
         self.assertNotIn("accessToken", self.alex)
