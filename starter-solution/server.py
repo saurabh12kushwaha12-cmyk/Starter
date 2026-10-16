@@ -61,7 +61,11 @@ def _safe_summary(value: Any, limit: int = 300) -> str:
     """Keep enough context for support while redacting common secret/PII patterns."""
     summary = "".join(ch for ch in str(value) if ch.isprintable())[:max(limit * 2, limit)]
     summary = re.sub(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", summary)
-    summary = re.sub(r"(?i)\b(api[_ -]?key|password|token|secret|authorization)\s*[:=]\s*[^\s,;]+",
+    summary = re.sub(
+        r"(?i)\b(api[_ -]?key|password|token|secret|authorization|credential)\b"
+        r"(?:\s+is)?\s*[:=]?\s+[^\s,;]+",
+        r"\1=[REDACTED]", summary)
+    summary = re.sub(r"(?i)\b(api[_ -]?key|password|token|secret|authorization|credential)\s*[:=]\s*[^\s,;]+",
                      r"\1=[REDACTED]", summary)
     summary = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "[REDACTED_EMAIL]", summary, flags=re.I)
     summary = re.sub(r"(?<!\w)\+?\d[\d ().-]{8,}\d(?!\w)", "[REDACTED_PHONE]", summary)
@@ -383,7 +387,14 @@ def _gemini_intent(message: str, prior_messages: list[dict[str, str]]) -> dict[s
             "from explicit user text; if not explicitly provided return null. serviceType is home-internet, mobile, or null. "
             "clarificationNeeded is a boolean. issueSummary is a concise string."
         )}]},
-        "contents": [{"role": "user", "parts": [{"text": json.dumps({"message": message, "recent_context": prior_messages[-4:]}, ensure_ascii=False)}]}],
+        "contents": [{"role": "user", "parts": [{"text": json.dumps({
+            "message": _safe_summary(message, MAX_MESSAGE_CHARS),
+            "recent_context": [
+                {"role": item.get("role", "user"),
+                 "content": _safe_summary(item.get("content", ""), 300)}
+                for item in prior_messages[-6:] if item.get("role") == "user"
+            ],
+        }, ensure_ascii=False)}]}],
         "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
     }
     # Send the API key in a header rather than the URL so it is less likely to appear in URL logs.
@@ -413,7 +424,7 @@ def _gemini_intent(message: str, prior_messages: list[dict[str, str]]) -> dict[s
         "accountId": account_id,
         "serviceType": service_type,
         "postalCode": parsed.get("postalCode") if isinstance(parsed.get("postalCode"), str) and re.fullmatch(r"\d{5}", parsed.get("postalCode")) else None,
-        "issueSummary": str(parsed.get("issueSummary") or message)[:300],
+        "issueSummary": _safe_summary(parsed.get("issueSummary") or message, 240),
         "clarificationNeeded": parsed.get("clarificationNeeded") is True,
     }
     result["_model"] = GEMINI_MODEL
@@ -688,7 +699,7 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                         done = COMPLETED_ACTIONS.get(pending_key)
                         pending = PENDING_ACTIONS.get(pending_key)
                         if not done and not pending:
-                            summary = intent.get("issueSummary") or original_message
+                            summary = _safe_summary(intent.get("issueSummary") or original_message, 240)
                             confirmation_id = "CONF-" + uuid.uuid4().hex[:10].upper()
                             action = {"type": "create_support_case", "accountId": account_id, "customerId": session["customerId"], "summary": summary[:240], "idempotencyKey": pending_key}
                             pending = {"confirmationId": confirmation_id, "sessionId": session_id, "action": action,
