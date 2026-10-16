@@ -1,0 +1,33 @@
+name: Apply productionization updates (one-time)
+
+on:
+  push:
+    paths:
+      - "APPLY_UPDATES"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Expand tested source and documentation update bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat updates.part-* > /tmp/updates.zip.b64
+          base64 --decode /tmp/updates.zip.b64 > /tmp/updates.zip
+          mkdir -p /tmp/updates-extracted
+          unzip -q /tmp/updates.zip -d /tmp/updates-extracted
+          cp -a /tmp/updates-extracted/. .
+          rm -f updates.part-* APPLY_UPDATES .github/workflows/apply-updates.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Productionize Gemini CX challenge starter and add evaluation docs"
+          git push
