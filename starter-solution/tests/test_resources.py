@@ -414,6 +414,20 @@ class ChallengeTests(unittest.TestCase):
         self.assertIn("workflow-orchestrator", metrics["agentUsage"])
         self.assertIn("account-service", metrics["toolUsage"])
 
+    def test_call_json_records_malformed_json_as_a_tool_failure(self):
+        trace_id = app._new_trace()
+        headers = app._session_headers(app.SESSIONS[self.session])
+        with patch.object(app, "request_raw", return_value=(200, b"not-json", "application/json")):
+            with self.assertRaises(app.ServiceError) as raised:
+                app.call_json("GET", "/api/accounts/ACC-2001", headers=headers,
+                              trace_id=trace_id, session_id=self.session,
+                              component="account-service")
+        self.assertEqual(raised.exception.service, "account-service")
+        events = app.get_trace(trace_id)["events"]
+        self.assertTrue(any(e["eventType"] == "tool.failed"
+                            and e["component"] == "account-service" for e in events))
+        self.assertTrue(any(e["eventType"] == "tool.retry" for e in events))
+
     def test_mock_enterprise_api_rejects_missing_bearer_token(self):
         with self.assertRaises(app.ServiceError) as raised:
             app.call_json("GET", "/api/customers/CUST-1001", retry_get=False)
