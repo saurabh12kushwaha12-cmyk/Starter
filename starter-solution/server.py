@@ -375,6 +375,29 @@ def _network(postal_code: str, session: dict[str, Any], trace_id: str) -> dict[s
     return data
 
 
+def _diagnostics(service_id: str, session: dict[str, Any], trace_id: str) -> dict[str, Any]:
+    """Run a controlled device diagnostic for a service owned by the authenticated account."""
+    emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"],
+         component="device-diagnostics", metadata={"serviceId": service_id})
+    data = call_json(
+        "POST", "/api/diagnostics", payload={"serviceId": service_id},
+        headers=_session_headers(session), retry_get=False, trace_id=trace_id,
+        session_id=session["sessionId"], component="device-diagnostics")
+    diagnostic_id = data.get("diagnosticId")
+    result = data.get("result")
+    if (data.get("serviceId") != service_id
+            or not isinstance(diagnostic_id, str)
+            or not re.fullmatch(r"DIAG-[A-F0-9]{6}", diagnostic_id)
+            or result not in {"no_device_fault_detected", "device_fault_detected", "diagnostic_inconclusive"}):
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component="device-diagnostics", metadata={"reason": "malformed_response"})
+        raise ServiceError("device-diagnostics", "malformed_response")
+    normalized = {"diagnosticId": diagnostic_id, "serviceId": service_id, "result": result}
+    emit("tool.completed", trace_id, session_id=session["sessionId"], component="device-diagnostics",
+         metadata={"diagnosticId": diagnostic_id, "result": result})
+    return normalized
+
+
 def _legacy_status(account_id: str, service_id: str, session: dict[str, Any], trace_id: str) -> dict[str, Any]:
     emit("tool.invoked", trace_id, "pending", session_id=session["sessionId"], component="legacy-adapter", metadata={"accountId": account_id})
     root = ET.Element("SubscriberStatusRequest")
