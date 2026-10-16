@@ -28,6 +28,7 @@ BILLING = load("billing.json")["billing"]
 OUTAGES = load("network-status.json")["outages"]
 CASES: dict[str, dict] = {}
 KEYS: dict[str, str] = {}
+TOKENS: dict[str, dict] = {}
 MOCK_LOCK = threading.RLock()
 
 
@@ -84,9 +85,12 @@ class H(BaseHTTPRequestHandler):
         if not header.startswith("Bearer "):
             return None
         token = header[7:].strip()
-        if not token.startswith("synthetic-"):
-            return None
-        customer_id = token.removeprefix("synthetic-")
+        with MOCK_LOCK:
+            record = TOKENS.get(token)
+            if not record or record.get("expiresAt", 0) <= time.time():
+                TOKENS.pop(token, None)
+                return None
+            customer_id = record.get("customerId")
         return find(CUSTOMERS, "customerId", customer_id)
 
     def require_principal(self):
@@ -181,12 +185,20 @@ class H(BaseHTTPRequestHandler):
                 )
                 if not customer:
                     return self.js(401, {"error": "invalid_credentials"})
+                expires_in = 0 if mode == "expired" else 3600
+                token = uuid.uuid4().hex + uuid.uuid4().hex
+                with MOCK_LOCK:
+                    TOKENS[token] = {
+                        "customerId": customer["customerId"],
+                        "roles": list(customer.get("roles", [])),
+                        "expiresAt": time.time() + expires_in,
+                    }
                 return self.js(200, {
-                    "accessToken": "expired" if mode == "expired" else "synthetic-" + customer["customerId"],
+                    "accessToken": token,
                     "customerId": customer["customerId"],
                     "accountId": customer.get("accountId"),
                     "roles": customer["roles"],
-                    "expiresIn": 0 if mode == "expired" else 3600,
+                    "expiresIn": expires_in,
                 })
 
             principal = self.require_principal()
