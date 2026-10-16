@@ -49,7 +49,7 @@ The test fixture starts an isolated local instance of the mock API and writes ev
 2. Validate response identity and every field needed for a customer-facing answer. Reject malformed types, unexpected record IDs, non-finite numeric values and partial data that cannot support a safe answer.
 3. Enforce user role, customer ownership and workflow state in application code before making the call. Never rely on Gemini output as an authorization decision.
 4. Emit `tool.invoked`, `tool.completed` and `tool.failed` events. Include only necessary sanitized metadata and preserve the request's trace ID.
-5. Map documented upstream errors to `ServiceError`. Retry only idempotent reads; do not automatically retry consequential writes unless the downstream service supports an idempotency key.
+5. Map documented upstream errors to `ServiceError`. Retry idempotent reads in a bounded way. The current implementation permits one retry for support-case creation only when the idempotency key is present; other consequential writes must not retry automatically.
 6. Add success, unauthorized access, malformed response, timeout/unavailable service and redaction tests. Update `api-contracts/enterprise-api.yaml`, architecture, README and the evidence matrix.
 7. Extend `mock-services/server.py` with synthetic data, bearer checks, ownership checks and explicit failure simulation so the flow remains reproducible offline.
 
