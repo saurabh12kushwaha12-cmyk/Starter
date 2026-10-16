@@ -206,6 +206,11 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(len(mock.CASES), 1)
         repeat = app.handle_chat("Create a support case for my internet issue", self.session)
         self.assertTrue(repeat.get("actionAlreadyCompleted"))
+        self.assertEqual(repeat["data"], {"caseId": confirmation["data"]["caseId"], "status": "open"})
+        repeat_json = json.dumps(repeat)
+        self.assertNotIn(self.session, repeat_json)
+        self.assertNotIn("idempotencyKey", repeat_json)
+        self.assertNotIn("accessToken", repeat_json)
         self.assertEqual(len(mock.CASES), 1)
 
     def test_expired_confirmation_is_reissued_and_not_counted_as_pending(self):
