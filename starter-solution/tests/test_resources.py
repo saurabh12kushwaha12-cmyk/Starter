@@ -357,7 +357,8 @@ class ChallengeTests(unittest.TestCase):
         self.assertIn(result["status"], {"resolved", "escalated"})
         events = app.get_trace(result["traceId"])["events"]
         components = {e.get("component") for e in events if e.get("eventType") == "tool.invoked"}
-        self.assertTrue({"customer-profile", "account-service", "network-diagnostics", "legacy-adapter"}.issubset(components))
+        self.assertTrue({"customer-profile", "account-service", "network-diagnostics",
+                          "device-diagnostics", "legacy-adapter"}.issubset(components))
 
     def test_malformed_legacy_xml_is_not_reported_as_success(self):
         with patch.dict(os.environ, {"MOCK_LEGACY_MODE": "malformed"}):
@@ -426,6 +427,31 @@ class ChallengeTests(unittest.TestCase):
             result = app.handle_chat("Show my bill", self.session)
         self.assertEqual(result["status"], "escalated")
         self.assertNotIn("$0.00", result["answer"])
+
+    def test_device_diagnostics_unavailable_escalates_for_normal_network_status(self):
+        jordan = self.login("jordan.lee", "ReviewerPass-1002")
+        with patch.dict(os.environ, {"MOCK_DIAGNOSTICS_MODE": "unavailable"}):
+            result = app.handle_chat("My mobile service is slow", jordan["sessionId"])
+        self.assertEqual(result["status"], "escalated")
+        self.assertIn("device-diagnostics", result["escalation"]["enterpriseSystemsAccessed"])
+        self.assertTrue(any(x["component"] == "device-diagnostics"
+                            for x in result["escalation"]["failedTools"]))
+        self.assertNotIn("no device fault", result["answer"].lower())
+
+    def test_device_diagnostic_fault_is_reported_with_verified_reference(self):
+        jordan = self.login("jordan.lee", "ReviewerPass-1002")
+        with patch.dict(os.environ, {"MOCK_DIAGNOSTICS_MODE": "fault"}):
+            result = app.handle_chat("My mobile service is slow", jordan["sessionId"])
+        self.assertEqual(result["status"], "resolved")
+        self.assertIn("device diagnostics detected a fault", result["answer"].lower())
+        self.assertRegex(result["data"]["diagnostics"]["diagnosticId"], r"^DIAG-[A-F0-9]{6}$")
+        self.assertIn("device-diagnostics", result["sources"])
+
+    def test_network_endpoint_denies_service_types_not_owned_by_customer(self):
+        session = app.SESSIONS[self.session]
+        with self.assertRaises(app.ServiceError) as raised:
+            app._network("94105", session, app._new_trace(), "mobile")
+        self.assertEqual(raised.exception.status, 403)
 
     def test_multi_system_legacy_failure_escalates_instead_of_claiming_health(self):
         jordan = self.login("jordan.lee", "ReviewerPass-1002")
