@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -188,6 +189,20 @@ class ChallengeTests(unittest.TestCase):
         repeat = app.handle_chat("Create a support case for my internet issue", self.session)
         self.assertTrue(repeat.get("actionAlreadyCompleted"))
         self.assertEqual(len(mock.CASES), 1)
+
+    def test_expired_confirmation_is_reissued_and_not_counted_as_pending(self):
+        message = "Create a support case for my internet issue"
+        first = app.handle_chat(message, self.session)
+        self.assertEqual(first["status"], "confirmation_required")
+        key = next(k for k, v in app.PENDING_ACTIONS.items() if v.get("sessionId") == self.session)
+        app.PENDING_ACTIONS[key]["expiresAt"] = time.time() - 1
+        self.assertEqual(app.get_metrics()["pendingConfirmations"], 0)
+
+        second = app.handle_chat(message, self.session)
+        self.assertEqual(second["status"], "confirmation_required")
+        self.assertNotEqual(first["confirmationId"], second["confirmationId"])
+        self.assertGreater(app.PENDING_ACTIONS[key]["expiresAt"], time.time())
+        self.assertEqual(len(app.PENDING_ACTIONS), 1)
 
     def test_case_cancellation_does_not_execute(self):
         result = app.handle_chat("Open a ticket for my problem", self.session)
