@@ -332,8 +332,12 @@ def _profile(session: dict[str, Any], trace_id: str) -> dict[str, Any]:
     # Keep only the fields required by business logic; synthetic auth attributes are never propagated.
     safe = {"customerId": data.get("customerId"), "name": data.get("name"), "postalCode": data.get("postalCode"), "accountId": data.get("accountId")}
     if safe["customerId"] != session.get("customerId"):
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component="customer-profile", metadata={"reason": "profile_identity_mismatch"})
         raise ServiceError("customer-profile", "profile_identity_mismatch", 403)
     if not safe["customerId"]:
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component="customer-profile", metadata={"reason": "malformed_profile"})
         raise ServiceError("customer-profile", "malformed_profile")
     session["postalCode"] = safe.get("postalCode")
     session["displayName"] = safe.get("name")
@@ -346,9 +350,14 @@ def _account(session: dict[str, Any], account_id: str, trace_id: str) -> dict[st
     data = call_json("GET", "/api/accounts/" + urllib.parse.quote(account_id, safe=""),
                      headers=_session_headers(session), trace_id=trace_id, session_id=session["sessionId"], component="account-service")
     if not _is_support(session) and data.get("customerId") != session.get("customerId"):
-        emit("authorization.denied", trace_id, "denied", session_id=session["sessionId"], metadata={"reason": "account_owner_mismatch"})
+        emit("authorization.denied", trace_id, "denied", session_id=session["sessionId"],
+             metadata={"reason": "account_owner_mismatch"})
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component="account-service", metadata={"reason": "account_owner_mismatch"})
         raise ServiceError("authorization", "access_denied", 403)
     if data.get("accountId") != account_id:
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component="account-service", metadata={"reason": "malformed_account_response"})
         raise ServiceError("account-service", "malformed_account_response")
     emit("tool.completed", trace_id, session_id=session["sessionId"], component="account-service", metadata={"accountId": account_id})
     return data
@@ -718,9 +727,22 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                 if intent["intent"] == "account_plan":
                     account = _account(session, account_id, trace_id)
                     plan = account.get("plan")
-                    if not isinstance(plan, dict) or not plan.get("name"):
+                    price = plan.get("monthlyPrice") if isinstance(plan, dict) else None
+                    valid_plan = (
+                        isinstance(plan, dict)
+                        and isinstance(plan.get("planId"), str) and bool(plan["planId"].strip())
+                        and isinstance(plan.get("name"), str) and bool(plan["name"].strip())
+                        and len(plan["name"]) <= 120
+                        and isinstance(price, (int, float)) and not isinstance(price, bool)
+                        and math.isfinite(float(price)) and price >= 0
+                    )
+                    if not valid_plan:
+                        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+                             component="account-service", metadata={"reason": "plan_information_unavailable"})
                         raise ServiceError("account-service", "plan_information_unavailable")
-                    result.update(answer=f"Your current plan is {plan['name']} (account {account_id}). This information came from the account service.", status="resolved", sources=["account-service"], data={"accountId": account_id, "plan": plan})
+                    plan_view = {"planId": plan["planId"], "name": plan["name"],
+                                 "monthlyPrice": round(float(price), 2)}
+                    result.update(answer=f"Your current plan is {plan_view['name']} (account {account_id}). This information came from the account service.", status="resolved", sources=["account-service"], data={"accountId": account_id, "plan": plan_view})
                 elif intent["intent"] == "billing":
                     data = _billing(account_id, session, trace_id)
                     result.update(answer=f"Your bill for {data.get('period', 'the listed period')} is ${float(data['total']):.2f}. The amount is from the billing service; line items are available in the returned data.", status="resolved", sources=["billing-service"], data=data)
