@@ -212,20 +212,27 @@ class H(BaseHTTPRequestHandler):
                 key = data.get("idempotencyKey")
                 account_id = data.get("accountId")
                 customer_id = data.get("customerId")
-                if not key:
-                    return self.js(400, {"error": "idempotency_key_required"})
-                if not self.may_access_account(principal, str(account_id or "")):
+                summary = data.get("summary")
+                if not isinstance(key, str) or not key.strip() or len(key) > 200:
+                    return self.js(400, {"error": "valid_idempotency_key_required"})
+                if not isinstance(account_id, str) or not isinstance(customer_id, str):
+                    return self.js(400, {"error": "valid_customer_and_account_required"})
+                if not self.may_access_account(principal, account_id):
                     return self.js(403, {"error": "access_denied"})
                 account = find(ACCOUNTS, "accountId", account_id)
                 if account is None or account.get("customerId") != customer_id:
                     return self.js(403, {"error": "customer_account_mismatch"})
-                if not isinstance(data.get("summary"), str) or not data["summary"].strip() or len(data["summary"]) > 240:
+                if not isinstance(summary, str) or not summary.strip() or len(summary) > 240:
                     return self.js(400, {"error": "valid_summary_required"})
                 with MOCK_LOCK:
                     if key in KEYS:
                         prior = CASES.get(KEYS[key])
                         if prior is None:
                             return self.js(503, {"error": "idempotency_record_inconsistent"})
+                        if (prior.get("customerId") != customer_id
+                                or prior.get("accountId") != account_id
+                                or prior.get("summary") != summary):
+                            return self.js(409, {"error": "idempotency_key_conflict"})
                         return self.js(200, prior)
                     case_id = "CASE-" + uuid.uuid4().hex[:8].upper()
                     KEYS[key] = case_id
