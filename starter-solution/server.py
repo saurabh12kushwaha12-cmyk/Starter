@@ -358,7 +358,7 @@ def _billing(account_id: str, session: dict[str, Any], trace_id: str) -> dict[st
     total = data.get("total")
     period = data.get("period")
     items = data.get("items")
-    valid_period = isinstance(period, str) and bool(re.fullmatch(r"\\d{4}-(0[1-9]|1[0-2])", period))
+    valid_period = isinstance(period, str) and bool(re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period))
     valid_items = (
         isinstance(items, list)
         and all(
