@@ -356,9 +356,27 @@ def _billing(account_id: str, session: dict[str, Any], trace_id: str) -> dict[st
     data = call_json("GET", f"/api/accounts/{urllib.parse.quote(account_id, safe='')}/billing",
                      headers=_session_headers(session), trace_id=trace_id, session_id=session["sessionId"], component="billing-service")
     total = data.get("total")
-    if (data.get("accountId") != account_id or not isinstance(total, (int, float))
-            or isinstance(total, bool) or not math.isfinite(float(total)) or total < 0
-            or not isinstance(data.get("items"), list)):
+    period = data.get("period")
+    items = data.get("items")
+    valid_period = isinstance(period, str) and bool(re.fullmatch(r"\\d{4}-(0[1-9]|1[0-2])", period))
+    valid_items = (
+        isinstance(items, list)
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("description"), str)
+            and bool(item["description"].strip())
+            and len(item["description"]) <= 160
+            and isinstance(item.get("amount"), (int, float))
+            and not isinstance(item.get("amount"), bool)
+            and math.isfinite(float(item["amount"]))
+            for item in items
+        )
+    )
+    if (data.get("accountId") != account_id or not valid_period
+            or not isinstance(total, (int, float)) or isinstance(total, bool)
+            or not math.isfinite(float(total)) or total < 0 or not valid_items):
+        emit("tool.failed", trace_id, "failure", session_id=session["sessionId"],
+             component="billing-service", metadata={"reason": "malformed_response"})
         raise ServiceError("billing-service", "malformed_response")
     emit("tool.completed", trace_id, session_id=session["sessionId"], component="billing-service", metadata={"accountId": account_id})
     return data
