@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     }
 
     await recordEvent(sql, user.username, traceId, "chat.response.generated", "conversation", "success", { intent: intent.intent, source: intent.source });
-    return NextResponse.json({ reply, intent: intent.intent, aiMode: intent.source === "gemini" ? "live" : currentAiMode(), traceId, pendingAction }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ reply, intent: intent.intent, aiMode: intent.source === "gemini" ? "live" : (currentAiMode() === "live" ? "degraded" : "reviewer"), traceId, pendingAction }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ error: "The support service is temporarily unavailable. Check database configuration and try again." }, { status: 503 });
   }
