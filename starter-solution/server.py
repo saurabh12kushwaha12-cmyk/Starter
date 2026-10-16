@@ -230,7 +230,7 @@ def _new_trace() -> str:
 
 def login(username: str, password: str) -> dict[str, Any]:
     if not isinstance(username, str) or not isinstance(password, str) or not username or not password:
-        raise ValueError("username_and_password_required")
+        raise ServiceError("authentication", "username_and_password_required", 400)
     result = call_json("POST", "/api/auth/login", payload={"username": username, "password": password}, retry_get=False)
     token = result.get("accessToken")
     customer_id = result.get("customerId")
@@ -269,8 +269,8 @@ def login(username: str, password: str) -> dict[str, Any]:
 
 
 def require_session(session_id: str | None, trace_id: str) -> dict[str, Any]:
-    if not session_id:
-        emit("authentication.required", trace_id, "denied", metadata={"reason": "session_missing"})
+    if not isinstance(session_id, str) or not session_id:
+        emit("authentication.required", trace_id, "denied", metadata={"reason": "session_missing_or_invalid"})
         raise ServiceError("authentication", "authentication_required", 401)
     with STATE_LOCK:
         session = SESSIONS.get(session_id)
