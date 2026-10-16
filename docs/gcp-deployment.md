@@ -19,7 +19,7 @@ This is a deployment plan, not a claim that a cloud environment has already been
 1. Build a pinned, non-root container image and publish to Artifact Registry.
 2. Deploy the application to Cloud Run with minimum necessary IAM permissions.
 3. Keep mock services internal or sidecar-like for the challenge demonstration; production enterprise endpoints must use authenticated private connectivity.
-4. Configure a health/readiness check and finite outbound timeouts. Keep action retries conservative; only GET requests are automatically retried by the current PoC.
+4. Configure a health/readiness check and finite outbound timeouts. Keep action retries conservative; GET retries are bounded, and only the idempotent support-case POST may be retried once when its idempotency key is present. Other consequential writes are not automatically retried.
 5. Supply Gemini credentials through a managed secret or a dedicated service identity—not `GEMINI_API_KEY` committed into Git.
 6. Replace in-memory sessions, pending confirmations, and completed-action cache with shared durable stores before scaling beyond one process/instance.
 7. Export structured telemetry, traces, and operational metrics; redact personal data and secrets before export.
