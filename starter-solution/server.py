@@ -544,20 +544,39 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                     services = account.get("services") or []
                     service_id = next((s.get("serviceId") for s in services if s.get("type") == intent.get("serviceType")), None)
                     legacy = None
+                    legacy_error: ServiceError | None = None
                     if service_id:
                         try:
                             legacy = _legacy_status(account_id, service_id, session, trace_id)
                         except ServiceError as legacy_exc:
-                            emit("tool.failed", trace_id, "failure", session_id=session["sessionId"], component="legacy-adapter", metadata={"reason": legacy_exc.safe_message})
+                            legacy_error = legacy_exc
+                            emit("tool.failed", trace_id, "failure", session_id=session["sessionId"], component="legacy-adapter",
+                                 metadata={"reason": legacy_exc.safe_message})
                     if network.get("status") in {"degraded", "outage", "down"}:
                         answer = f"The network service reports {network['status']} for postal code {postal}."
                         if network.get("incidentId"):
                             answer += f" Incident: {network['incidentId']}."
-                    elif legacy and legacy.get("error"):
-                        answer = f"The network lookup did not confirm an outage, and the legacy check returned {legacy['error']}. I recommend support review."
+                        if legacy_error or (legacy and legacy.get("error")):
+                            answer += " The legacy check was not fully verified, so support may need to follow up."
+                        result.update(answer=answer, status="resolved",
+                                      sources=["customer-profile", "account-service", "network-diagnostics"] + (["legacy-service"] if legacy or legacy_error else []),
+                                      data={"network": network, "legacy": legacy})
+                    elif legacy_error or (legacy and legacy.get("error")):
+                        reason = legacy_error.safe_message if legacy_error else str(legacy.get("error"))
+                        escalation = _escalate(
+                            trace_id, session["sessionId"], original_message, reason,
+                            ["customer authenticated", "customer profile verified", "account service queried", "network status queried"],
+                            "Support should inspect the legacy telecom integration and continue only after verifying subscriber status.",
+                            session["customerId"])
+                        result.update(
+                            answer="I could not verify the subscriber status because a required legacy check failed. I have escalated the request rather than treating the service as healthy.",
+                            status="escalated", sources=["customer-profile", "account-service", "network-diagnostics", "legacy-service"],
+                            data={"network": network, "legacy": legacy}, escalation=escalation)
                     else:
                         answer = "The available network and legacy checks did not confirm a current outage. I can create a support case if you confirm."
-                    result.update(answer=answer, status="resolved", sources=["customer-profile", "account-service", "network-diagnostics"] + (["legacy-service"] if legacy else []), data={"network": network, "legacy": legacy})
+                        result.update(answer=answer, status="resolved",
+                                      sources=["customer-profile", "account-service", "network-diagnostics"] + (["legacy-service"] if legacy else []),
+                                      data={"network": network, "legacy": legacy})
                 elif intent["intent"] == "create_case":
                     # A request may be explicit, but no consequential call occurs before confirmation.
                     pending_key = session_id + ":" + hashlib.sha256((account_id + "|" + re.sub(r"\s+", " ", original_message.lower())).encode()).hexdigest()[:24]
