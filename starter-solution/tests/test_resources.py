@@ -266,6 +266,37 @@ class ChallengeTests(unittest.TestCase):
         self.assertIn("legacy-adapter", result["escalation"]["enterpriseSystemsAccessed"])
         self.assertTrue(result["escalation"]["failedTools"])
 
+    def test_gemini_clarification_flag_is_honored(self):
+        app.AI_MODE = "live"
+        with patch.object(app, "_gemini_intent", return_value={
+            "intent": "billing", "accountId": None, "serviceType": None,
+            "issueSummary": "Show my bill", "clarificationNeeded": True
+        }):
+            result = app.handle_chat("Show my bill", self.session)
+        self.assertEqual(result["status"], "clarification")
+        self.assertIn("billingQuestion", result["missingFields"])
+
+    def test_legacy_business_error_is_escalated(self):
+        with patch.object(app, "_legacy_status", return_value={
+            "accountId": "ACC-2001", "serviceId": "SVC-5001",
+            "serviceStatus": "unknown", "networkStatus": "unknown",
+            "errorCode": "503", "error": "legacy_unavailable"
+        }):
+            result = app.handle_chat("Check my legacy subscriber status", self.session)
+        self.assertEqual(result["status"], "escalated")
+        self.assertIn("legacy_unavailable", result["answer"])
+
+    def test_mock_case_api_idempotency_returns_existing_case(self):
+        payload = {"customerId": "CUST-1001", "accountId": "ACC-2001",
+                   "summary": "Synthetic test", "idempotencyKey": "test-idempotency-key"}
+        headers = {"Authorization": "Bearer synthetic-CUST-1001"}
+        created = app.call_json("POST", "/api/support-cases", payload=payload,
+                                headers=headers, retry_get=False)
+        repeated = app.call_json("POST", "/api/support-cases", payload=payload,
+                                 headers=headers, retry_get=False)
+        self.assertEqual(created["caseId"], repeated["caseId"])
+        self.assertEqual(len(mock.CASES), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
