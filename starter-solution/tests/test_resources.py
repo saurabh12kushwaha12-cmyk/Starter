@@ -337,6 +337,13 @@ class ChallengeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.emit("request.received", "not-a-trace-id")
 
+    def test_telemetry_schema_validation_rejects_invalid_status_and_duration(self):
+        trace_id = app._new_trace()
+        with self.assertRaises(ValueError):
+            app.emit("workflow.cancelled", trace_id, "cancelled")
+        with self.assertRaises(ValueError):
+            app.emit("workflow.resolved", trace_id, "success", duration_ms=float("nan"))
+
     def test_gemini_prompt_redacts_credentials_and_omits_assistant_history(self):
         payload = {
             "candidates": [{"content": {"parts": [{"text": json.dumps({
