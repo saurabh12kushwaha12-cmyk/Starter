@@ -216,7 +216,12 @@ def call_json(method: str, path: str, *, payload: dict[str, Any] | None = None,
             return data
         except ServiceError as exc:
             last_error = ServiceError(component, exc.safe_message, exc.status)
-            if attempt + 1 >= attempts or (exc.status is not None and exc.status < 500):
+            non_retryable_client_error = (
+                exc.status is not None and 400 <= exc.status < 500
+                and exc.status not in {408, 425, 429}
+                and exc.safe_message != "malformed_response"
+            )
+            if attempt + 1 >= attempts or non_retryable_client_error:
                 break
             time.sleep(0.05 * (attempt + 1))
         except (json.JSONDecodeError, UnicodeDecodeError):
