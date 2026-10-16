@@ -182,6 +182,9 @@ class ChallengeTests(unittest.TestCase):
             self.assertTrue(required.issubset(event))
             self.assertEqual(event["traceId"], result["traceId"])
             self.assertNotEqual(event["sessionId"], self.session)
+            self.assertIsInstance(event["timestamp"], str)
+            self.assertIn(event["status"], {"success", "failure", "pending", "denied"})
+            self.assertFalse(set(event) - required - {"durationMs", "metadata"})
             encoded = json.dumps(event).lower()
             self.assertNotIn("reviewerpass", encoded)
             self.assertNotIn("accesstoken", encoded)
@@ -191,6 +194,66 @@ class ChallengeTests(unittest.TestCase):
         metrics = app.get_metrics()
         self.assertGreaterEqual(metrics["totalRequests"], 1)
         self.assertGreaterEqual(metrics["eventCount"], trace["eventCount"])
+
+    def test_historical_trace_read_redacts_legacy_session_ids_and_sensitive_metadata(self):
+        trace_id = "TRACE-ABCDEF123456"
+        old_event = {
+            "eventId": "EVT-LEGACY000001", "traceId": trace_id, "sessionId": self.session,
+            "timestamp": "2026-10-16T00:00:00+00:00", "eventType": "request.received",
+            "component": "starter-app", "status": "success",
+            "metadata": {"api_key": "test-secret-key", "note": "safe"},
+        }
+        app.EVENTS_FILE.write_text(json.dumps(old_event) + "\\n", encoding="utf-8")
+        trace = app.get_trace(trace_id)
+        self.assertNotEqual(trace["events"][0]["sessionId"], self.session)
+        self.assertNotIn(self.session, json.dumps(trace))
+        self.assertNotIn("test-secret-key", json.dumps(trace))
+        self.assertNotIn("api_key", json.dumps(trace))
+
+    def test_gemini_prompt_redacts_credentials_and_omits_assistant_history(self):
+        payload = {
+            "candidates": [{"content": {"parts": [{"text": json.dumps({
+                "intent": "billing", "accountId": None, "serviceType": None,
+                "postalCode": None, "issueSummary": "Check my current bill",
+                "clarificationNeeded": False,
+            })}]}}],
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        captured = {}
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = request.data.decode("utf-8")
+            captured["headers"] = dict(request.header_items())
+            return FakeResponse()
+
+        history = [
+            {"role": "user", "content": "My password is Secret123 and email is alex.morgan@example.test"},
+            {"role": "assistant", "content": "Your private bill was $84.99 for account ACC-2001"},
+        ]
+        with patch.object(app, "GEMINI_API_KEY", "private-test-api-key"), \
+             patch.object(app.urllib.request, "urlopen", side_effect=fake_urlopen):
+            intent = app._gemini_intent(
+                "Check bill; password is Secret456; api_key=XYZSECRET; email alex.morgan@example.test",
+                history,
+            )
+        self.assertEqual(intent["intent"], "billing")
+        self.assertNotIn("private-test-api-key", captured["url"])
+        self.assertNotIn("Secret123", captured["body"])
+        self.assertNotIn("Secret456", captured["body"])
+        self.assertNotIn("XYZSECRET", captured["body"])
+        self.assertNotIn("alex.morgan@example.test", captured["body"])
+        self.assertNotIn("Your private bill was", captured["body"])
+        self.assertIn("X-goog-api-key", captured["headers"])
 
     def test_request_limits_and_empty_input(self):
         with self.assertRaises(ValueError):
