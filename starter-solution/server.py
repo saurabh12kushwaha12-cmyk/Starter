@@ -704,7 +704,7 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
     elif final_status in {"confirmation_required", "pending"}:
         final_event, final_state = "workflow.pending_confirmation", "pending"
     elif final_status == "cancelled":
-        final_event, final_state = "workflow.cancelled", "cancelled"
+        final_event, final_state = "workflow.cancelled", "success"
     else:
         final_event, final_state = "workflow.failed", "failure"
     emit(final_event, trace_id, final_state,
@@ -897,7 +897,7 @@ HTML = r"""<!doctype html>
 <header class="top"><div><div class="eyebrow">Enterprise AI • Customer experience</div><h1>Resolution Console</h1><div class="sub">Gemini-assisted telco support with guarded actions, mock enterprise integrations and traceable outcomes.</div></div><span class="tag" id="modeTag">Reviewer mode</span></header>
 <div class="layout"><section class="panel"><div class="row" style="justify-content:space-between;align-items:center"><h2>Customer conversation</h2><span class="status"><span class="dot"></span><span id="authStatus">Signed out</span></span></div>
 <div class="login-grid"><input id="username" aria-label="Username" value="alex.morgan" autocomplete="username"><input id="password" aria-label="Password" value="ReviewerPass-1001" type="password" autocomplete="current-password"><button id="loginBtn" onclick="signIn()">Sign in</button><button class="secondary" onclick="signOut()">Sign out</button></div>
-<p class="muted-small">Synthetic demo users only. Customer: alex.morgan / ReviewerPass-1001 · second customer: jordan.lee / ReviewerPass-1002. Never use real customer data here.</p>
+<p class="muted-small">Synthetic demo users only: customer alex.morgan / ReviewerPass-1001; customer jordan.lee / ReviewerPass-1002; operations support.agent / ReviewerPass-3001. Operational metrics, traces and escalations are visible only to the support-agent role.</p>
 <div class="divider"></div><div id="chatlog" class="chatlog"><div class="bubble bot">Welcome. Sign in, then ask about your plan, bill, connectivity, subscriber status, or a support case.</div></div>
 <div class="composer"><textarea id="message" rows="2" maxlength="2000" placeholder="Describe the issue…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea><button onclick="sendMessage()">Send</button></div>
 <div class="muted-small" style="margin-top:8px">Action requests are not submitted until explicit confirmation. All customer/account data is synthetic.</div></section>
