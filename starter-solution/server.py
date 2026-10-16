@@ -906,7 +906,10 @@ def handle_chat(message: str, session_id: str | None) -> dict[str, Any]:
                                        "traceId": trace_id, "expiresAt": time.time() + 600, "state": "pending"}
                             PENDING_ACTIONS[pending_key] = pending
                     if done:
-                        result.update(answer="This support case was already created. I will not create a duplicate.", status="resolved", data=done, sources=["case-management"], actionAlreadyCompleted=True)
+                        public_case = {"caseId": done.get("caseId"), "status": done.get("status")}
+                        result.update(answer="This support case was already created. I will not create a duplicate.",
+                                      status="resolved", data=public_case, sources=["case-management"],
+                                      actionAlreadyCompleted=True)
                     elif pending:
                         if pending.get("state") == "executing":
                             result.update(answer="This support-case request is already being processed. Please wait for its outcome.", status="pending")
@@ -980,9 +983,13 @@ def confirm_action(session_id: str, confirmation_id: str, confirmed: bool) -> di
         if current is not pending:
             completed = COMPLETED_ACTIONS.get(action_key)
             if completed:
+                public_case = {"caseId": completed.get("caseId"), "status": completed.get("status")}
+                emit("workflow.resolved", trace_id, "success", session_id=session_id,
+                     duration_ms=(time.monotonic() - workflow_started) * 1000,
+                     metadata={"status": "resolved", "actionType": "create_support_case", "duplicateRequest": True})
                 return {"traceId": trace_id, "status": "resolved",
                         "answer": f"Support case {completed['caseId']} was already created and verified.",
-                        "data": completed, "sources": ["case-management"], "aiMode": "reviewer"}
+                        "data": public_case, "sources": ["case-management"], "aiMode": "reviewer"}
             raise ServiceError("case-management", "confirmation_not_found_or_expired", 404)
         if pending["expiresAt"] <= time.time():
             PENDING_ACTIONS.pop(action_key, None)
