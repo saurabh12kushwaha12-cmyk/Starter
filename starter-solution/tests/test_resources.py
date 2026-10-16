@@ -419,6 +419,16 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(raised.exception.status, 409)
         self.assertEqual(len(mock.CASES), 1)
 
+    def test_mock_case_rejects_non_string_idempotency_key(self):
+        token = app.SESSIONS[self.session]["accessToken"]
+        with self.assertRaises(app.ServiceError) as raised:
+            app.call_json("POST", "/api/support-cases",
+                          payload={"customerId": "CUST-1001", "accountId": "ACC-2001",
+                                   "summary": "Synthetic test", "idempotencyKey": ["bad", "key"]},
+                          headers={"Authorization": "Bearer " + token}, retry_get=False)
+        self.assertEqual(raised.exception.status, 400)
+        self.assertEqual(mock.CASES, {})
+
     def test_logout_revokes_session_and_pending_confirmation(self):
         pending = app.handle_chat("Create a support case for my internet issue", self.session)
         self.assertEqual(pending["status"], "confirmation_required")
