@@ -44,14 +44,14 @@ The test suite starts a local mock-service instance, uses isolated temporary eve
 - **Reviewer mode** (`AI_MODE=reviewer`): deterministic intent classification, but the same authenticated application workflow, mock enterprise APIs, validation, confirmation, case creation, escalation, events, traces, and metrics are exercised.
 - **Live mode** (`AI_MODE=live`): uses the Gemini `generateContent` REST endpoint when `GEMINI_API_KEY` is supplied. Configure `GEMINI_MODEL` as needed. If Gemini is unavailable, the app records `gemini.failure` and enters an explicit degraded deterministic mode; the application still enforces authorization and action confirmation outside the model.
 
-Copy `.env.example` values into your local shell or a private `.env` file; the standard library app does not automatically parse `.env` files. Never expose API keys in screenshots, logs, client responses, or commits.
+Copy `.env.example` values into your local shell or a private `.env` file; the standard library app does not automatically parse `.env` files. Use a current Gemini API key restricted to the Gemini API (or an authorization key from AI Studio); Google's current guidance says unrestricted standard keys are being rejected. Never expose API keys in screenshots, logs, client responses, or commits.
 
 Example (bash):
 
 ```bash
 export AI_MODE=live
 export GEMINI_API_KEY='your-key-from-a-secret-store'
-export GEMINI_MODEL='gemini-2.5-flash'
+export GEMINI_MODEL='gemini-3.8-flash'
 python3 starter-solution/server.py
 ```
 
