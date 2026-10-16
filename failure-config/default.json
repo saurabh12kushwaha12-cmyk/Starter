@@ -3,5 +3,6 @@
   "legacyService": "success",
   "caseManagement": "success",
   "geminiProvider": "success",
-  "billingService": "success"
+  "billingService": "success",
+  "diagnosticsService": "success"
 }
