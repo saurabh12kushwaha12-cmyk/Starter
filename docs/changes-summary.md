@@ -14,12 +14,12 @@
 - Enforced bearer authentication and ownership in the mock enterprise APIs, rather than relying only on the client application to check records.
 - Hardened the customer/profile/account/billing/network adapters, validated response identity and numeric billing values, and recorded failed integration calls.
 - Normalized legacy XML responses and escalated unverified legacy status instead of implying that a service was healthy.
-- Added explicit support-case confirmation, expiration, confirmation ownership checks, idempotency keys and atomic mock-service duplicate handling.
+- Added explicit support-case confirmation, expiration, confirmation ownership checks, idempotency keys and atomic mock-service duplicate handling. Idempotency keys are bound to the customer, account and payload; conflicting reuse is rejected, and raw session-derived keys are never returned to the browser or stored in escalation evidence.
 - Made workflow escalation records more useful with completed steps, systems accessed, selected evidence, failed tools, error summary, pending-action context and recommended next step.
 - Redacted common email/phone/credential patterns from escalation summaries and sanitized event metadata.
-- Restricted operational metrics, request traces and escalation-list endpoints to active sessions with the synthetic support-agent role.
-- Expanded event-derived metrics and surfaced them in the operations UI.
-- Added GitHub Actions CI for Python 3.11 and 3.12, plus tests for authentication, ownership, clarification, failure escalation, idempotency, operations access and redaction.
+- Restricted operational metrics, request traces and escalation-list endpoints to active sessions with the synthetic support-agent role; chat/action responses do not echo the application session ID.
+- Expanded event-derived reliability/integration metrics and surfaced them in the operations UI. Added CSP, anti-framing, no-referrer, no-sniff and Permissions-Policy response headers, plus clearing of the password input after sign-in.
+- Added GitHub Actions CI for Python 3.11 and 3.12, embedded browser-JavaScript syntax checking, HTTP-level security-header and operations-role tests, and tests for authentication, ownership, clarification, failure escalation, idempotency, operations access and redaction.
 - Expanded README/API contract/developer handover/architecture/deployment/evidence documentation.
 
 ## Security and reliability improvements
