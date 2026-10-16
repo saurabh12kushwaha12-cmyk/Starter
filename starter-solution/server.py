@@ -234,18 +234,30 @@ def login(username: str, password: str) -> dict[str, Any]:
     result = call_json("POST", "/api/auth/login", payload={"username": username, "password": password}, retry_get=False)
     token = result.get("accessToken")
     customer_id = result.get("customerId")
-    roles = result.get("roles", [])
-    expires_in = result.get("expiresIn", 0)
-    if not token or not customer_id or not isinstance(roles, list) or int(expires_in or 0) <= 0:
+    account_id = result.get("accountId")
+    roles = result.get("roles")
+    expires_in = result.get("expiresIn")
+    valid_account = account_id is None or (
+        isinstance(account_id, str) and re.fullmatch(r"ACC-[0-9]{4}", account_id)
+    )
+    if (
+        not isinstance(token, str) or not token or len(token) > 2048
+        or not isinstance(customer_id, str) or not customer_id or len(customer_id) > 128
+        or not isinstance(roles, list) or not roles
+        or any(not isinstance(role, str) or not role or len(role) > 64 for role in roles)
+        or not isinstance(expires_in, int) or isinstance(expires_in, bool)
+        or expires_in <= 0 or expires_in > 86_400
+        or not valid_account
+    ):
         raise ServiceError("authentication", "invalid_or_expired_authentication", 401)
     session_id = secrets.token_urlsafe(24)
     session = {
         "sessionId": session_id,
-        "customerId": str(customer_id),
-        "accountId": result.get("accountId"),
-        "roles": [str(x) for x in roles],
-        "accessToken": str(token),  # server-side only; never exposed to model/UI/logs
-        "expiresAt": time.time() + int(expires_in),
+        "customerId": customer_id,
+        "accountId": account_id,
+        "roles": list(roles),
+        "accessToken": token,  # server-side only; never exposed to model/UI/logs
+        "expiresAt": time.time() + expires_in,
         "postalCode": None,
         "displayName": None,
         "pendingClarification": None,
