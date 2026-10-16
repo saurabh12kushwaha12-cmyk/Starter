@@ -82,6 +82,9 @@ class ChallengeTests(unittest.TestCase):
         self.assertIn("sessionId", self.alex)
         self.assertNotIn("accessToken", self.alex)
         self.assertNotIn("password", json.dumps(self.alex).lower())
+        server_token = app.SESSIONS[self.session]["accessToken"]
+        self.assertNotIn("synthetic-CUST-", server_token)
+        self.assertIn(server_token, mock.TOKENS)
 
     def test_protected_account_query_requires_authentication(self):
         result = app.handle_chat("What plan am I using?", None)
@@ -94,6 +97,8 @@ class ChallengeTests(unittest.TestCase):
         self.assertIn("Fiber 500", result["answer"])
         self.assertEqual(result["sources"], ["account-service"])
         self.assertEqual(result["data"]["accountId"], "ACC-2001")
+        events = app.get_trace(result["traceId"])["events"]
+        self.assertTrue(any(e["eventType"] == "authorization.allowed" for e in events))
 
     def test_cross_customer_account_request_is_denied_before_fetch(self):
         result = app.handle_chat("What plan am I using on ACC-2002?", self.session)
@@ -323,6 +328,16 @@ class ChallengeTests(unittest.TestCase):
         support = self.login("support.agent", "ReviewerPass-3001")
         allowed = app.require_operations_session(support["sessionId"])
         self.assertEqual(allowed["customerId"], "AGENT-3001")
+
+    def test_negative_case_request_never_creates_or_leaves_pending_action(self):
+        request = app.handle_chat("Create a support case for my internet issue", self.session)
+        self.assertEqual(request["status"], "confirmation_required")
+        result = app.handle_chat("No, don't create a support case", self.session)
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(result["intent"], "action_declined")
+        self.assertIn("will not create", result["answer"].lower())
+        self.assertEqual(mock.CASES, {})
+        self.assertFalse(any(p.get("sessionId") == self.session for p in app.PENDING_ACTIONS.values()))
 
     def test_escalation_summary_redacts_secrets_and_common_pii(self):
         safe = app._safe_summary(
