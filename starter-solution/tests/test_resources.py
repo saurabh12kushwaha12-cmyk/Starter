@@ -550,6 +550,21 @@ class ChallengeTests(unittest.TestCase):
                               session_id=self.session, component="case-management")
         self.assertEqual(request.call_count, 1)
 
+    def test_get_retries_once_after_non_object_json_response(self):
+        trace_id = app._new_trace()
+        token = app.SESSIONS[self.session]["accessToken"]
+        with patch.object(app, "request_raw", side_effect=[
+            (200, b"[]", "application/json"),
+            (200, b'{"accountId":"ACC-2001"}', "application/json"),
+        ]) as request:
+            result = app.call_json("GET", "/api/accounts/ACC-2001",
+                                   headers={"Authorization": "Bearer " + token},
+                                   trace_id=trace_id, session_id=self.session,
+                                   component="account-service")
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(result["accountId"], "ACC-2001")
+        self.assertTrue(any(e["eventType"] == "tool.retry" for e in app.get_trace(trace_id)["events"]))
+
     def test_mock_enterprise_api_rejects_missing_bearer_token(self):
         with self.assertRaises(app.ServiceError) as raised:
             app.call_json("GET", "/api/customers/CUST-1001", retry_get=False)
