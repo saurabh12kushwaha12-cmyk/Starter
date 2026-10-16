@@ -471,7 +471,7 @@ def _legacy_status(account_id: str, service_id: str, session: dict[str, Any], tr
         if normalized["accountId"] != account_id or normalized["serviceId"] != service_id:
             raise ServiceError("legacy-service", "legacy_response_identity_mismatch", status)
         code = normalized["errorCode"]
-        if not re.fullmatch(r"\d{3}", code):
+        if code != "0" and not re.fullmatch(r"\d{3}", code):
             raise ServiceError("legacy-service", "malformed_legacy_error_code", status)
         if code == "0":
             if (normalized["serviceStatus"] == "unknown"
